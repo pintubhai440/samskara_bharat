@@ -1,0 +1,8 @@
+{
+  "name": "Remix Samskara Bharat",
+  "description": "Indian Heritage \u0026 Modern Value-Based EdTech for LKG to Class 10 students",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

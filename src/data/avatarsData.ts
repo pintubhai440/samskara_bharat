@@ -1,0 +1,68 @@
+import { StudentAvatar } from '../types';
+
+export const availableAvatars: StudentAvatar[] = [
+  {
+    id: 'avatar-aarav',
+    name: 'Aarav (The Inquirer)',
+    emoji: '🧑🏽‍🎓',
+    bgGradient: 'from-[#FF9933]/20 to-[#FFD166]/30',
+    themeColor: '#FF9933',
+    personality: 'Curious learner who loves reading epics and exploring science.',
+  },
+  {
+    id: 'avatar-ananya',
+    name: 'Ananya (The Artist)',
+    emoji: '👧🏽',
+    bgGradient: 'from-[#22A06B]/20 to-[#38BDF8]/30',
+    themeColor: '#22A06B',
+    personality: 'Creative thinker passionate about storytelling and nature.',
+  },
+  {
+    id: 'avatar-vihaan',
+    name: 'Vihaan (The Thinker)',
+    emoji: '👦🏽',
+    bgGradient: 'from-[#38BDF8]/20 to-[#17324D]/20',
+    themeColor: '#38BDF8',
+    personality: 'Calm listener who enjoys philosophical dilemmas and puzzles.',
+  },
+  {
+    id: 'avatar-meera',
+    name: 'Meera (The Empath)',
+    emoji: '👧🏾',
+    bgGradient: 'from-[#FFD166]/30 to-[#FF9933]/20',
+    themeColor: '#FFD166',
+    personality: 'Compassionate friend dedicated to Seva and helping classmates.',
+  },
+  {
+    id: 'avatar-dhruv',
+    name: 'Dhruv (The Steadfast)',
+    emoji: '🧒🏽',
+    bgGradient: 'from-[#17324D]/20 to-[#22A06B]/25',
+    themeColor: '#17324D',
+    personality: 'Resilient and focused, determined to master moral fortitude.',
+  },
+  {
+    id: 'avatar-diya',
+    name: 'Diya (The Illuminator)',
+    emoji: '👧🏽',
+    bgGradient: 'from-[#FF9933]/25 to-[#22A06B]/20',
+    themeColor: '#FF9933',
+    personality: 'Bright and energetic, leading school green drives and debate.',
+  },
+  {
+    id: 'avatar-kabir',
+    name: 'Kabir (The Harmonizer)',
+    emoji: '👦🏾',
+    bgGradient: 'from-[#22A06B]/20 to-[#FFD166]/25',
+    themeColor: '#22A06B',
+    personality: 'Gentle mediator bringing unity and joy to group projects.',
+  },
+  {
+    id: 'avatar-riya',
+    name: 'Riya (The Explorer)',
+    emoji: '🧒🏾',
+    bgGradient: 'from-[#38BDF8]/25 to-[#FF9933]/20',
+    themeColor: '#38BDF8',
+    personality: 'Active sports enthusiast practicing equanimity (Samatvam).',
+  },
+];

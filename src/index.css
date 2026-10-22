@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --font-heading: "Nunito", sans-serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-telugu: "Noto Sans Telugu", sans-serif;
+  --font-devanagari: "Noto Sans Devanagari", sans-serif;
+
+  --color-saffron: #FF9933;
+  --color-fresh-green: #22A06B;
+  --color-sky-blue: #38BDF8;
+  --color-warm-yellow: #FFD166;
+  --color-deep-navy: #17324D;
+  --color-soft-ivory: #FFF9F0;
+}
+
+html {
+  scroll-behavior: smooth;
+  font-family: var(--font-sans);
+}
+
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: var(--font-heading);
+}
+
+.font-telugu {
+  font-family: var(--font-telugu), var(--font-sans);
+}
+
+.font-devanagari {
+  font-family: var(--font-devanagari), var(--font-sans);
+}
+
+/* Subtle Indian Rangoli & Jharokha motif background helpers */
+.bg-jharokha-pattern {
+  background-image: radial-gradient(#FF9933 0.75px, transparent 0.75px), radial-gradient(#22A06B 0.75px, #FFF9F0 0.75px);
+  background-size: 36px 36px;
+  background-position: 0 0, 18px 18px;
+  background-opacity: 0.05;
+}
