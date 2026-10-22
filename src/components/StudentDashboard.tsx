@@ -38,12 +38,20 @@ import {
   Info,
   ShieldCheck,
   Volume2,
+  VolumeX,
+  RotateCcw,
+  RotateCw,
   Maximize,
   Minimize,
   Wifi,
   WifiOff,
   RefreshCw,
-  HardDrive
+  HardDrive,
+  Database,
+  Settings,
+  AlertCircle,
+  ExternalLink,
+  Link as LinkIcon
 } from 'lucide-react';
 import { LessonDownloadCard } from './LessonDownloadCard';
 import { DownloadedLessonsSection } from './DownloadedLessonsSection';
@@ -72,11 +80,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Video player state & Fullscreen API integration
+  // Video player state & Supabase Storage integration
+  const [customVideoUrl, setCustomVideoUrl] = useState<string>(() => {
+    const saved = localStorage.getItem(`sb_custom_video_url_${satyavrataLesson.id}`);
+    if (saved) return saved;
+    return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl || '';
+  });
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+  const [tempVideoUrlInput, setTempVideoUrlInput] = useState<string>(() => {
+    const saved = localStorage.getItem(`sb_custom_video_url_${satyavrataLesson.id}`);
+    if (saved) return saved;
+    return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl || '';
+  });
   const [isPlaying, setIsPlaying] = useState(false);
-  const [videoProgress, setVideoProgress] = useState(25);
+  const [videoProgress, setVideoProgress] = useState(0);
+  const [videoDuration, setVideoDuration] = useState<number>(540); // 9 minutes = 540 seconds default
+  const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [areControlsVisible, setAreControlsVisible] = useState(true);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [quickFeedback, setQuickFeedback] = useState<string | null>(null);
+
   const videoContainerRef = useRef<HTMLDivElement>(null);
+  const htmlVideoRef = useRef<HTMLVideoElement>(null);
+  const controlsTimeoutRef = useRef<any>(null);
+  const quickFeedbackTimeoutRef = useRef<any>(null);
 
   // Synchronise native Fullscreen API changes (including keyboard Escape)
   useEffect(() => {
@@ -88,6 +118,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         (document as any).msFullscreenElement
       );
       setIsFullscreen(isCurrentlyFullscreen);
+      if (isCurrentlyFullscreen) {
+        resetControlsTimeout();
+      }
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -103,10 +136,50 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     };
   }, []);
 
-  // Advance video progress when playing, maintaining position in or out of fullscreen
+  // Auto-hide controls and overlays when playing (YouTube / Netflix style)
+  const resetControlsTimeout = () => {
+    setAreControlsVisible(true);
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    if (isPlaying) {
+      controlsTimeoutRef.current = setTimeout(() => {
+        setAreControlsVisible(false);
+      }, 2500);
+    }
+  };
+
+  useEffect(() => {
+    if (!isPlaying) {
+      setAreControlsVisible(true);
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    } else {
+      resetControlsTimeout();
+    }
+    return () => {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    };
+  }, [isPlaying]);
+
+  // Flash quick visual feedback ripple on screen (+10s, -10s, Speed)
+  const showQuickFeedback = (text: string) => {
+    setQuickFeedback(text);
+    if (quickFeedbackTimeoutRef.current) {
+      clearTimeout(quickFeedbackTimeoutRef.current);
+    }
+    quickFeedbackTimeoutRef.current = setTimeout(() => {
+      setQuickFeedback(null);
+    }, 850);
+  };
+
+  // Advance video progress in simulated narrative mode when no real video URL is connected
   useEffect(() => {
     let interval: any = null;
-    if (isPlaying) {
+    if (!customVideoUrl && isPlaying) {
       interval = setInterval(() => {
         setVideoProgress((prev) => {
           if (prev >= 100) {
@@ -120,9 +193,107 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isPlaying]);
+  }, [isPlaying, customVideoUrl]);
 
-  const toggleFullscreen = async () => {
+  // Handle Play / Pause toggle across both real video and simulated player
+  const handleTogglePlay = () => {
+    resetControlsTimeout();
+    if (htmlVideoRef.current && customVideoUrl) {
+      if (isPlaying) {
+        htmlVideoRef.current.pause();
+        showQuickFeedback('Paused');
+      } else {
+        setVideoError(null);
+        htmlVideoRef.current.play().catch((err) => {
+          console.warn('Playback error:', err);
+          setVideoError('Click play again to start video streaming.');
+        });
+        showQuickFeedback('Playing');
+      }
+    } else {
+      setIsPlaying(!isPlaying);
+      showQuickFeedback(!isPlaying ? 'Playing' : 'Paused');
+    }
+  };
+
+  // Rewind 10 seconds (-10s)
+  const handleSkipBackward = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    resetControlsTimeout();
+    if (htmlVideoRef.current && customVideoUrl) {
+      const cur = htmlVideoRef.current.currentTime;
+      const dur = htmlVideoRef.current.duration || videoDuration || 540;
+      const target = Math.max(0, cur - 10);
+      htmlVideoRef.current.currentTime = target;
+      setVideoCurrentTime(target);
+      if (dur > 0) setVideoProgress(Math.min(100, Math.round((target / dur) * 100)));
+    } else {
+      const curSec = Math.floor((videoProgress / 100) * totalDurationSec);
+      const targetSec = Math.max(0, curSec - 10);
+      setVideoProgress(Math.min(100, Math.round((targetSec / totalDurationSec) * 100)));
+    }
+    showQuickFeedback('−10s ⏪');
+  };
+
+  // Fast-forward 10 seconds (+10s)
+  const handleSkipForward = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    resetControlsTimeout();
+    if (htmlVideoRef.current && customVideoUrl) {
+      const cur = htmlVideoRef.current.currentTime;
+      const dur = htmlVideoRef.current.duration || videoDuration || 540;
+      const target = Math.min(dur, cur + 10);
+      htmlVideoRef.current.currentTime = target;
+      setVideoCurrentTime(target);
+      if (dur > 0) setVideoProgress(Math.min(100, Math.round((target / dur) * 100)));
+    } else {
+      const curSec = Math.floor((videoProgress / 100) * totalDurationSec);
+      const targetSec = Math.min(totalDurationSec, curSec + 10);
+      setVideoProgress(Math.min(100, Math.round((targetSec / totalDurationSec) * 100)));
+    }
+    showQuickFeedback('+10s ⏩');
+  };
+
+  // Cycle playback speed (1x -> 1.25x -> 1.5x -> 2x -> 0.75x)
+  const handleCyclePlaybackRate = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    resetControlsTimeout();
+    const rates = [1, 1.25, 1.5, 2, 0.75];
+    const nextRate = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
+    setPlaybackRate(nextRate);
+    if (htmlVideoRef.current) {
+      htmlVideoRef.current.playbackRate = nextRate;
+    }
+    showQuickFeedback(`${nextRate}x Speed`);
+  };
+
+  const handleToggleMute = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    resetControlsTimeout();
+    if (htmlVideoRef.current) {
+      htmlVideoRef.current.muted = !isMuted;
+    }
+    setIsMuted(!isMuted);
+    showQuickFeedback(!isMuted ? 'Muted' : 'Unmuted');
+  };
+
+  const handleRestartVideo = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    resetControlsTimeout();
+    setVideoProgress(0);
+    setVideoCurrentTime(0);
+    if (htmlVideoRef.current && customVideoUrl) {
+      htmlVideoRef.current.currentTime = 0;
+      htmlVideoRef.current.play().catch(() => {});
+    } else {
+      setIsPlaying(true);
+    }
+    showQuickFeedback('Restarted');
+  };
+
+  const toggleFullscreen = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    resetControlsTimeout();
     if (!videoContainerRef.current) return;
 
     try {
@@ -154,18 +325,98 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
+  // Keyboard navigation shortcuts for the video player
+  useEffect(() => {
+    if (activeTab !== 'videos') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || isSupabaseModalOpen) return;
+
+      if (e.code === 'Space' || e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        handleTogglePlay();
+      } else if (e.code === 'ArrowLeft' || e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        handleSkipBackward();
+      } else if (e.code === 'ArrowRight' || e.key === 'l' || e.key === 'L') {
+        e.preventDefault();
+        handleSkipForward();
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        handleToggleMute();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, isPlaying, customVideoUrl, isMuted, isFullscreen, isSupabaseModalOpen, videoDuration, videoProgress]);
+
   const handleVideoScrub = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    resetControlsTimeout();
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const newPercent = Math.max(0, Math.min(100, Math.round((clickX / rect.width) * 100)));
     setVideoProgress(newPercent);
+    if (htmlVideoRef.current && customVideoUrl) {
+      const dur = htmlVideoRef.current.duration || videoDuration || 540;
+      const targetTime = (newPercent / 100) * dur;
+      htmlVideoRef.current.currentTime = targetTime;
+      setVideoCurrentTime(targetTime);
+    }
   };
 
-  const totalDurationSec = 9 * 60; // 9 minutes = 540 seconds
-  const currentVideoSec = Math.floor((videoProgress / 100) * totalDurationSec);
+  const handleHtmlVideoTimeUpdate = () => {
+    if (htmlVideoRef.current) {
+      const cur = htmlVideoRef.current.currentTime;
+      const dur = htmlVideoRef.current.duration || videoDuration || 540;
+      setVideoCurrentTime(cur);
+      if (dur > 0) {
+        setVideoProgress(Math.min(100, Math.round((cur / dur) * 100)));
+      }
+    }
+  };
+
+  const handleHtmlVideoLoadedMetadata = () => {
+    if (htmlVideoRef.current && htmlVideoRef.current.duration) {
+      setVideoDuration(htmlVideoRef.current.duration);
+    }
+    setVideoError(null);
+  };
+
+  const handleHtmlVideoEnded = () => {
+    setIsPlaying(false);
+    setVideoProgress(100);
+    handleMarkVideoCompleted();
+  };
+
+  const handleSaveCustomVideoUrl = (urlToSave: string) => {
+    const trimmed = urlToSave.trim();
+    setCustomVideoUrl(trimmed);
+    setTempVideoUrlInput(trimmed);
+    if (trimmed) {
+      localStorage.setItem(`sb_custom_video_url_${satyavrataLesson.id}`, trimmed);
+      showToast('✓ Supabase Video URL connected and saved!');
+    } else {
+      localStorage.removeItem(`sb_custom_video_url_${satyavrataLesson.id}`);
+      showToast('Switched to simulated story mode.');
+    }
+    setIsPlaying(false);
+    setVideoProgress(0);
+    setVideoCurrentTime(0);
+    setVideoError(null);
+    setIsSupabaseModalOpen(false);
+  };
+
+  const totalDurationSec = customVideoUrl && videoDuration > 0 ? Math.floor(videoDuration) : 9 * 60;
+  const currentVideoSec = customVideoUrl ? Math.floor(videoCurrentTime) : Math.floor((videoProgress / 100) * totalDurationSec);
   const formatVideoTime = (secs: number) => {
     const m = Math.floor(secs / 60);
-    const s = secs % 60;
+    const s = Math.floor(secs % 60);
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
@@ -509,62 +760,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <span className="ml-auto text-[10px] text-[#22A06B] font-bold shrink-0">
             (Independent access enabled across all sections)
           </span>
-        </div>
-
-        {/* Network Connectivity & Offline Sync Status Bar */}
-        <div className="bg-white border-t border-gray-100 py-2 px-4 sm:px-8 text-xs flex flex-wrap items-center justify-between gap-2 shadow-2xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-[11px] ${
-              isOnline 
-                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                : 'bg-amber-50 text-amber-900 border border-amber-200'
-            }`}>
-              {isOnline ? (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <Wifi className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Online · Live Cloud Sync Active</span>
-                </>
-              ) : (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-amber-500" />
-                  <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Offline Mode Active · Stored Locally</span>
-                </>
-              )}
-            </div>
-
-            {pendingSyncCount > 0 && (
-              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-bold">
-                <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                <span>{pendingSyncCount} response(s) pending sync</span>
-                {isOnline && (
-                  <button
-                    onClick={handleAutoSync}
-                    disabled={isSyncing}
-                    className="ml-1 underline font-black hover:text-sky-950 cursor-pointer"
-                  >
-                    Sync Now
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleToggleSimulatedOffline}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-[11px] font-semibold border transition-all cursor-pointer ${
-                simulatedOffline
-                  ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
-                  : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-              }`}
-              title="Test offline behavior without disconnecting Wi-Fi"
-            >
-              {simulatedOffline ? <WifiOff className="w-3.5 h-3.5 text-amber-700" /> : <Wifi className="w-3.5 h-3.5 text-gray-500" />}
-              <span>{simulatedOffline ? 'Simulating Offline (Click to Reconnect)' : 'Test Offline Mode'}</span>
-            </button>
-          </div>
         </div>
       </header>
 
@@ -975,41 +1170,92 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Prominent Video Player Container with Fullscreen API */}
-              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#FF9933]/30 shadow-md">
+              {/* Prominent Video Player Container with Fullscreen API, Auto-Hiding Controls & Skip Buttons */}
+              <div className="bg-white rounded-3xl p-4 sm:p-6 border border-[#FF9933]/30 shadow-md">
                 
                 <div 
                   ref={videoContainerRef}
-                  className={`transition-all duration-300 ${
+                  onMouseMove={resetControlsTimeout}
+                  onTouchStart={resetControlsTimeout}
+                  onPointerDown={resetControlsTimeout}
+                  onClick={handleTogglePlay}
+                  className={`transition-all duration-300 relative select-none ${
                     isFullscreen 
-                      ? 'fixed inset-0 z-50 rounded-none w-screen h-screen flex flex-col justify-between p-6 sm:p-10 bg-[#0d1d2d] text-white shadow-2xl' 
-                      : 'relative aspect-16/9 bg-[#17324D] rounded-3xl overflow-hidden shadow-inner flex flex-col justify-between p-5 sm:p-8 text-white'
+                      ? `fixed inset-0 z-50 rounded-none w-screen h-screen flex flex-col justify-between p-6 sm:p-10 bg-black text-white shadow-2xl ${
+                          !areControlsVisible && isPlaying ? 'cursor-none' : 'cursor-default'
+                        }` 
+                      : `relative aspect-16/9 bg-[#17324D] rounded-3xl overflow-hidden shadow-inner flex flex-col justify-between p-4 sm:p-6 text-white ${
+                          !areControlsVisible && isPlaying ? 'cursor-none' : 'cursor-default'
+                        }`
                   }`}
                 >
-                  {/* Subtle Cinematic Vignette */}
-                  <div className="absolute inset-0 bg-radial from-transparent via-black/35 to-black/85 pointer-events-none" />
+                  {/* Real HTML5 Video element when Supabase / Custom URL is present */}
+                  {customVideoUrl ? (
+                    <video
+                      ref={htmlVideoRef}
+                      src={customVideoUrl}
+                      playsInline
+                      muted={isMuted}
+                      onPlay={() => {
+                        setIsPlaying(true);
+                        resetControlsTimeout();
+                      }}
+                      onPause={() => {
+                        setIsPlaying(false);
+                        setAreControlsVisible(true);
+                      }}
+                      onTimeUpdate={handleHtmlVideoTimeUpdate}
+                      onLoadedMetadata={handleHtmlVideoLoadedMetadata}
+                      onEnded={handleHtmlVideoEnded}
+                      onError={() => {
+                        setVideoError('Video stream nahi ho paayi. Please check karein ki Supabase bucket "Public" hai aur URL sahi hai.');
+                        setIsPlaying(false);
+                      }}
+                      className="absolute inset-0 w-full h-full object-contain bg-black z-0 pointer-events-none"
+                    />
+                  ) : null}
 
-                  {/* Header overlay */}
-                  <div className="relative z-10 flex items-center justify-between">
+                  {/* Subtle Cinematic Vignette - Fades out when controls are auto-hidden during playback */}
+                  <div className={`absolute inset-0 bg-radial from-transparent via-black/20 to-black/80 pointer-events-none z-10 transition-opacity duration-300 ${
+                    areControlsVisible || !isPlaying ? 'opacity-85' : 'opacity-0'
+                  }`} />
+
+                  {/* Header overlay - smoothly hides when controls are inactive */}
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className={`relative z-20 flex items-center justify-between transition-opacity duration-300 ${
+                      areControlsVisible || !isPlaying ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+                    }`}
+                  >
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold bg-[#FF9933] text-white px-3.5 py-1 rounded-full shadow-xs">
                         {lesson.gunaName}
                       </span>
-                      <span className="hidden sm:inline-block text-xs font-semibold text-gray-200 bg-white/10 px-2.5 py-0.5 rounded-md">
+                      <span className="hidden sm:inline-block text-xs font-semibold text-gray-200 bg-black/40 backdrop-blur-xs px-2.5 py-0.5 rounded-md border border-white/10">
                         {lesson.sourceEpic} · Class 6
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-gray-300">
-                        {formatVideoTime(currentVideoSec)} / 09:00
+                      <span className="text-xs font-semibold text-gray-200 bg-black/50 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-white/10 font-mono">
+                        {formatVideoTime(currentVideoSec)} / {formatVideoTime(totalDurationSec)}
                       </span>
+
+                      {/* Discreet Settings Cog Button to change URL if needed */}
+                      <button
+                        onClick={() => setIsSupabaseModalOpen(true)}
+                        className="p-2 rounded-xl bg-black/50 hover:bg-black/70 backdrop-blur-xs text-gray-200 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                        title="Change Video URL / Supabase Source"
+                        aria-label="Change Video URL"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
 
                       {/* Top Fullscreen Exit / Toggle Button */}
                       <button
                         onClick={toggleFullscreen}
-                        className="p-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-                        title={isFullscreen ? 'Exit Fullscreen (Escape)' : 'Enter Fullscreen'}
+                        className="p-2 rounded-xl bg-black/50 hover:bg-black/70 backdrop-blur-xs text-white border border-white/10 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                        title={isFullscreen ? 'Exit Fullscreen (Escape)' : 'Enter Fullscreen (F)'}
                         aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
                       >
                         {isFullscreen ? (
@@ -1027,27 +1273,56 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* Center Play Button & Story Scene Context */}
-                  <div className="relative z-10 flex flex-col items-center justify-center text-center space-y-3 my-auto">
-                    <button
-                      onClick={() => setIsPlaying(!isPlaying)}
-                      className="w-18 h-18 sm:w-22 sm:h-22 rounded-full bg-[#FF9933] hover:bg-[#e68524] text-white flex items-center justify-center shadow-2xl transition-transform hover:scale-105 cursor-pointer ring-4 ring-white/20"
-                      aria-label={isPlaying ? 'Pause Story' : 'Play Story'}
+                  {/* Quick on-screen feedback badge (+10s, -10s, Speed) */}
+                  {quickFeedback && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-in fade-in zoom-in-75 duration-150">
+                      <div className="bg-black/85 backdrop-blur-md text-[#FFD166] text-sm sm:text-base font-bold px-4 py-2 rounded-full shadow-2xl border border-white/20 flex items-center gap-2">
+                        <span>{quickFeedback}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Center Play Button ONLY when PAUSED (never blocking video while playing) */}
+                  {!isPlaying && (
+                    <div 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleTogglePlay();
+                      }}
+                      className="relative z-20 flex flex-col items-center justify-center text-center space-y-2 my-auto transition-all duration-300 animate-in fade-in"
                     >
-                      {isPlaying ? <Pause className="w-9 h-9" /> : <Play className="w-9 h-9 fill-white ml-1" />}
-                    </button>
-                    <div className="space-y-1">
-                      <p className="text-sm sm:text-base font-bold text-white max-w-md drop-shadow-md">
+                      <button
+                        type="button"
+                        className="w-18 h-18 sm:w-20 sm:h-20 rounded-full bg-[#FF9933] hover:bg-[#e68524] text-white flex items-center justify-center shadow-2xl transition-transform hover:scale-105 cursor-pointer ring-4 ring-white/30"
+                        aria-label="Play Story"
+                      >
+                        <Play className="w-9 h-9 fill-white ml-1" />
+                      </button>
+                      <p className="text-xs font-bold text-white/90 bg-black/60 backdrop-blur-xs px-3 py-1 rounded-full drop-shadow-md">
                         {lesson.storyTitle}
                       </p>
-                      <span className="text-xs font-medium text-white/80 block">
-                        {isPlaying ? 'Streaming Satyavrata Story Audio & Scene...' : 'Click to stream the narrative'}
-                      </span>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Bottom Controls Bar with Interactive Scrub & Fullscreen Button */}
-                  <div className="relative z-10 space-y-2.5 bg-black/40 backdrop-blur-xs p-3 rounded-2xl border border-white/10">
+                  {videoError && (
+                    <div 
+                      onClick={(e) => e.stopPropagation()}
+                      className="relative z-20 bg-red-500/90 text-white text-xs px-4 py-2 rounded-xl flex items-center gap-2 max-w-md mx-auto border border-red-400 my-auto"
+                    >
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{videoError}</span>
+                    </div>
+                  )}
+
+                  {/* Bottom Controls Bar with Backward, Play, Forward, Scrub, Mute, Speed & Fullscreen */}
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className={`relative z-20 space-y-2.5 bg-black/75 backdrop-blur-md p-3 sm:p-4 rounded-2xl border border-white/15 transition-all duration-300 ${
+                      areControlsVisible || !isPlaying 
+                        ? 'opacity-100 translate-y-0 pointer-events-auto' 
+                        : 'opacity-0 translate-y-4 pointer-events-none'
+                    }`}
+                  >
                     {/* Interactive Scrub Bar */}
                     <div 
                       onClick={handleVideoScrub}
@@ -1062,42 +1337,96 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs text-gray-300">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between text-xs text-gray-300 gap-2">
+                      <div className="flex items-center gap-1 sm:gap-2">
+                        {/* 10s Backward */}
                         <button
-                          onClick={() => setIsPlaying(!isPlaying)}
-                          className="hover:text-white transition-colors cursor-pointer"
+                          onClick={handleSkipBackward}
+                          className="p-1.5 hover:text-[#FFD166] text-white transition-colors cursor-pointer flex items-center gap-0.5 rounded-lg hover:bg-white/10"
+                          title="Rewind 10 seconds (Left Arrow or J)"
+                          aria-label="Rewind 10 seconds"
                         >
-                          {isPlaying ? <Pause className="w-4 h-4 text-[#FFD166]" /> : <Play className="w-4 h-4 fill-white" />}
+                          <RotateCcw className="w-4 h-4" />
+                          <span className="text-[10px] font-bold font-mono">10</span>
                         </button>
-                        <span className="font-mono text-[11px]">
-                          {formatVideoTime(currentVideoSec)} / 09:00
+
+                        {/* Play / Pause */}
+                        <button
+                          onClick={handleTogglePlay}
+                          className="p-1.5 text-white hover:text-[#FFD166] transition-colors cursor-pointer rounded-lg hover:bg-white/10"
+                          title={isPlaying ? 'Pause (Space or K)' : 'Play (Space or K)'}
+                          aria-label={isPlaying ? 'Pause' : 'Play'}
+                        >
+                          {isPlaying ? <Pause className="w-5 h-5 text-[#FFD166]" /> : <Play className="w-5 h-5 fill-white" />}
+                        </button>
+
+                        {/* 10s Forward */}
+                        <button
+                          onClick={handleSkipForward}
+                          className="p-1.5 hover:text-[#FFD166] text-white transition-colors cursor-pointer flex items-center gap-0.5 rounded-lg hover:bg-white/10"
+                          title="Forward 10 seconds (Right Arrow or L)"
+                          aria-label="Forward 10 seconds"
+                        >
+                          <span className="text-[10px] font-bold font-mono">10</span>
+                          <RotateCw className="w-4 h-4" />
+                        </button>
+
+                        {/* Restart */}
+                        <button
+                          onClick={handleRestartVideo}
+                          className="p-1.5 hover:text-[#FFD166] text-white transition-colors cursor-pointer rounded-lg hover:bg-white/10 hidden sm:inline-flex"
+                          title="Restart Video from Beginning"
+                          aria-label="Restart Video"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Volume / Mute */}
+                        <button
+                          onClick={handleToggleMute}
+                          className="p-1.5 hover:text-white transition-colors cursor-pointer rounded-lg hover:bg-white/10"
+                          title={isMuted ? 'Unmute (M)' : 'Mute (M)'}
+                          aria-label={isMuted ? 'Unmute' : 'Mute'}
+                        >
+                          {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-gray-200" />}
+                        </button>
+
+                        {/* Time Display */}
+                        <span className="font-mono text-[11px] text-gray-200 pl-1">
+                          {formatVideoTime(currentVideoSec)} / {formatVideoTime(totalDurationSec)}
                         </span>
                       </div>
 
-                      <span className="text-[11px] text-[#FFD166] font-semibold hidden md:inline">
-                        Satyavrata Story · Dilemma at the crossroads
-                      </span>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        {/* Playback Speed Button */}
+                        <button
+                          onClick={handleCyclePlaybackRate}
+                          className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-[#FFD166] font-bold font-mono text-[11px] transition-colors cursor-pointer"
+                          title="Playback Speed (Click to cycle: 1x, 1.25x, 1.5x, 2x, 0.75x)"
+                        >
+                          {playbackRate}x
+                        </button>
 
-                      {/* Explicit Working Fullscreen Button */}
-                      <button
-                        onClick={toggleFullscreen}
-                        className="p-1 hover:text-[#FFD166] transition-colors cursor-pointer flex items-center gap-1"
-                        title={isFullscreen ? 'Exit Fullscreen (Escape)' : 'Full Screen'}
-                        aria-label={isFullscreen ? 'Exit Fullscreen' : 'Full Screen'}
-                      >
-                        {isFullscreen ? (
-                          <>
-                            <Minimize className="w-4 h-4" />
-                            <span className="text-[11px] font-bold">Exit</span>
-                          </>
-                        ) : (
-                          <>
-                            <Maximize className="w-4 h-4" />
-                            <span className="text-[11px] font-bold">Full Screen</span>
-                          </>
-                        )}
-                      </button>
+                        {/* Fullscreen Button */}
+                        <button
+                          onClick={toggleFullscreen}
+                          className="p-1.5 hover:text-[#FFD166] text-white transition-colors cursor-pointer flex items-center gap-1 rounded-lg hover:bg-white/10"
+                          title={isFullscreen ? 'Exit Fullscreen (F)' : 'Full Screen (F)'}
+                          aria-label={isFullscreen ? 'Exit Fullscreen' : 'Full Screen'}
+                        >
+                          {isFullscreen ? (
+                            <>
+                              <Minimize className="w-4 h-4" />
+                              <span className="text-[11px] font-bold hidden sm:inline">Exit</span>
+                            </>
+                          ) : (
+                            <>
+                              <Maximize className="w-4 h-4" />
+                              <span className="text-[11px] font-bold hidden sm:inline">Full Screen</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1691,6 +2020,149 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         </main>
       </div>
+
+      {/* ========================================================
+          SUPABASE VIDEO STORAGE & CLOUD CONNECT MODAL
+         ======================================================== */}
+      {isSupabaseModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-orange-200 max-h-[90vh] overflow-y-auto space-y-5"
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-orange-100 text-[#FF9933] rounded-2xl">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[#17324D] font-heading">
+                    Connect Supabase Video Storage
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Host your lesson videos permanently on Supabase & stream on Vercel
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSupabaseModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-700 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer"
+                aria-label="Close dialog"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick 4-Step Guide */}
+            <div className="bg-[#FFF9F0] p-4 rounded-2xl border border-[#FF9933]/25 space-y-2 text-xs text-[#17324D]">
+              <div className="flex items-center gap-1.5 font-bold text-[#FF9933]">
+                <Info className="w-4 h-4" />
+                <span>Supabase se Video Connect karne ka 4-Step Tarika:</span>
+              </div>
+              <ol className="list-decimal list-inside space-y-1.5 text-gray-700 pl-1">
+                <li>
+                  <strong>supabase.com</strong> par login karein aur apna project open karein.
+                </li>
+                <li>
+                  Left menu me <strong>Storage</strong> par jayein aur <strong>"New Bucket"</strong> banayein (Naam: <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono text-[11px]">videos</code>) aur <strong>"Public bucket"</strong> ON rakhein.
+                </li>
+                <li>
+                  Bucket ke andar apni video file (<code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono text-[11px]">.mp4</code> ya <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono text-[11px]">.webm</code>) upload karein.
+                </li>
+                <li>
+                  File ke 3-dots menu par click karke <strong>"Get Public URL"</strong> copy karein aur neeche paste karein.
+                </li>
+              </ol>
+            </div>
+
+            {/* Video URL Input Field */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-[#17324D]">
+                Video URL (Supabase Link ya Project Public Path jaise /video.mp4):
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={tempVideoUrlInput}
+                  onChange={(e) => setTempVideoUrlInput(e.target.value)}
+                  placeholder="https://xyz.supabase.co/storage/v1/object/public/videos/satyavrata.mp4 ya /video.mp4"
+                  className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#FF9933] font-mono"
+                />
+                {tempVideoUrlInput && (
+                  <button
+                    onClick={() => setTempVideoUrlInput('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs px-1"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Test Demo Video Helper */}
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-gray-50 rounded-2xl border border-gray-200">
+              <div className="text-[11px] text-gray-600">
+                <span className="font-bold text-[#17324D] block">Test karne ke liye ready sample chahiye?</span>
+                Ek click me sample video test kar sakte hain
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const sampleUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+                  setTempVideoUrlInput(sampleUrl);
+                }}
+                className="px-3 py-1.5 bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Use Sample MP4 Video
+              </button>
+            </div>
+
+            {/* Vercel Environment Variables Note */}
+            <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200 text-xs text-emerald-900 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                <span>Vercel Permanent Deployment Tip:</span>
+              </div>
+              <p className="text-[11px] text-emerald-800">
+                Vercel par sabhi users ke liye permanently chalane ke liye, Vercel Dashboard me <strong>Project Settings → Environment Variables</strong> me ye add kar dein:
+              </p>
+              <code className="block bg-white p-2 rounded-lg font-mono text-[11px] text-[#17324D] border border-emerald-200 overflow-x-auto select-all">
+                VITE_LESSON_VIDEO_URL = {tempVideoUrlInput || 'https://xyz.supabase.co/storage/v1/object/public/videos/satyavrata.mp4'}
+              </code>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => handleSaveCustomVideoUrl('')}
+                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer"
+              >
+                Reset to Default Narrative
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSupabaseModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveCustomVideoUrl(tempVideoUrlInput)}
+                  className="px-5 py-2 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl shadow-xs transition-colors cursor-pointer"
+                >
+                  Save &amp; Play Video
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

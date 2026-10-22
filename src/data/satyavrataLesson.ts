@@ -13,6 +13,7 @@ export const satyavrataLesson: Lesson = {
   videoThumbnailGradient: 'from-[#FF9933]/35 via-[#FFD166]/20 to-[#22A06B]/30',
   videoSynopsis: 
     'An earnest forest seeker named Satyavrata has taken a sacred lifelong vow: under no circumstance will he ever speak an untruth. One quiet afternoon, a terrified deer, fleeing for its life, darts past his cottage and hides in the dense brush by the hermitage stream. Moments later, a fierce, exhausted hunter with a drawn bow rushes in and asks directly: "O seeker of truth, did you see the deer? Where is it hiding?" If Satyavrata speaks the literal truth, an innocent creature dies. If he denies seeing it, his sacred vow of truthfulness is broken. Satyavrata is caught at the agonizing crossroads where literal honesty threatens compassion and life itself.',
+  videoUrl: (import.meta as any).env?.VITE_LESSON_VIDEO_URL || 'https://sueccxsiimptiaingzjg.supabase.co/storage/v1/object/public/videos/Team-Integrity-SnapYT.App.mp4',
   passageText: 
 `A Difficult Choice at School
 

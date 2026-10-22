@@ -112,6 +112,7 @@ export interface Lesson {
   durationMinutes: number;
   videoThumbnailGradient: string;
   videoSynopsis: string;
+  videoUrl?: string;
   passageText: string;
   questions: ReflectionQuestion[];
   explanationText: string;
