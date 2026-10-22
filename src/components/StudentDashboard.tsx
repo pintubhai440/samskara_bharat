@@ -86,13 +86,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (saved) return saved;
     return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl || '';
   });
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
-  const [tempVideoUrlInput, setTempVideoUrlInput] = useState<string>(() => {
-    const saved = localStorage.getItem(`sb_custom_video_url_${satyavrataLesson.id}`);
-    if (saved) return saved;
-    return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl || '';
-  });
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoDuration, setVideoDuration] = useState<number>(540); // 9 minutes = 540 seconds default
   const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
@@ -331,7 +326,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || isSupabaseModalOpen) return;
+      if (tag === 'input' || tag === 'textarea') return;
 
       if (e.code === 'Space' || e.key === 'k' || e.key === 'K') {
         e.preventDefault();
@@ -353,7 +348,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab, isPlaying, customVideoUrl, isMuted, isFullscreen, isSupabaseModalOpen, videoDuration, videoProgress]);
+  }, [activeTab, isPlaying, customVideoUrl, isMuted, isFullscreen, videoDuration, videoProgress]);
 
   const handleVideoScrub = (e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -392,24 +387,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setIsPlaying(false);
     setVideoProgress(100);
     handleMarkVideoCompleted();
-  };
-
-  const handleSaveCustomVideoUrl = (urlToSave: string) => {
-    const trimmed = urlToSave.trim();
-    setCustomVideoUrl(trimmed);
-    setTempVideoUrlInput(trimmed);
-    if (trimmed) {
-      localStorage.setItem(`sb_custom_video_url_${satyavrataLesson.id}`, trimmed);
-      showToast('✓ Supabase Video URL connected and saved!');
-    } else {
-      localStorage.removeItem(`sb_custom_video_url_${satyavrataLesson.id}`);
-      showToast('Switched to simulated story mode.');
-    }
-    setIsPlaying(false);
-    setVideoProgress(0);
-    setVideoCurrentTime(0);
-    setVideoError(null);
-    setIsSupabaseModalOpen(false);
   };
 
   const totalDurationSec = customVideoUrl && videoDuration > 0 ? Math.floor(videoDuration) : 9 * 60;
@@ -1178,7 +1155,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   onMouseMove={resetControlsTimeout}
                   onTouchStart={resetControlsTimeout}
                   onPointerDown={resetControlsTimeout}
-                  onClick={handleTogglePlay}
+                  onClick={() => resetControlsTimeout()}
+                  onDoubleClick={handleTogglePlay}
                   className={`transition-all duration-300 relative select-none ${
                     isFullscreen 
                       ? `fixed inset-0 z-50 rounded-none w-screen h-screen flex flex-col justify-between p-6 sm:p-10 bg-black text-white shadow-2xl ${
@@ -1189,31 +1167,45 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         }`
                   }`}
                 >
-                  {/* Real HTML5 Video element when Supabase / Custom URL is present */}
+                  {/* Real HTML5 Video element with aggressive preloading for stutter-free playback */}
                   {customVideoUrl ? (
                     <video
                       ref={htmlVideoRef}
                       src={customVideoUrl}
                       playsInline
+                      preload="auto"
+                      crossOrigin="anonymous"
                       muted={isMuted}
                       onPlay={() => {
                         setIsPlaying(true);
+                        setIsBuffering(false);
                         resetControlsTimeout();
                       }}
                       onPause={() => {
                         setIsPlaying(false);
                         setAreControlsVisible(true);
                       }}
+                      onWaiting={() => setIsBuffering(true)}
+                      onPlaying={() => setIsBuffering(false)}
+                      onCanPlay={() => setIsBuffering(false)}
                       onTimeUpdate={handleHtmlVideoTimeUpdate}
                       onLoadedMetadata={handleHtmlVideoLoadedMetadata}
                       onEnded={handleHtmlVideoEnded}
                       onError={() => {
                         setVideoError('Video stream nahi ho paayi. Please check karein ki Supabase bucket "Public" hai aur URL sahi hai.');
                         setIsPlaying(false);
+                        setIsBuffering(false);
                       }}
                       className="absolute inset-0 w-full h-full object-contain bg-black z-0 pointer-events-none"
                     />
                   ) : null}
+
+                  {/* Loading / Buffering Spinner */}
+                  {isBuffering && isPlaying && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+                      <div className="w-14 h-14 rounded-full border-4 border-white/20 border-t-[#FF9933] animate-spin shadow-2xl" />
+                    </div>
+                  )}
 
                   {/* Subtle Cinematic Vignette - Fades out when controls are auto-hidden during playback */}
                   <div className={`absolute inset-0 bg-radial from-transparent via-black/20 to-black/80 pointer-events-none z-10 transition-opacity duration-300 ${
@@ -1240,16 +1232,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <span className="text-xs font-semibold text-gray-200 bg-black/50 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-white/10 font-mono">
                         {formatVideoTime(currentVideoSec)} / {formatVideoTime(totalDurationSec)}
                       </span>
-
-                      {/* Discreet Settings Cog Button to change URL if needed */}
-                      <button
-                        onClick={() => setIsSupabaseModalOpen(true)}
-                        className="p-2 rounded-xl bg-black/50 hover:bg-black/70 backdrop-blur-xs text-gray-200 hover:text-white border border-white/10 transition-colors cursor-pointer"
-                        title="Change Video URL / Supabase Source"
-                        aria-label="Change Video URL"
-                      >
-                        <Settings className="w-4 h-4" />
-                      </button>
 
                       {/* Top Fullscreen Exit / Toggle Button */}
                       <button
@@ -2020,149 +2002,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         </main>
       </div>
-
-      {/* ========================================================
-          SUPABASE VIDEO STORAGE & CLOUD CONNECT MODAL
-         ======================================================== */}
-      {isSupabaseModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div 
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-orange-200 max-h-[90vh] overflow-y-auto space-y-5"
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2.5 bg-orange-100 text-[#FF9933] rounded-2xl">
-                  <Database className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-[#17324D] font-heading">
-                    Connect Supabase Video Storage
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    Host your lesson videos permanently on Supabase & stream on Vercel
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsSupabaseModalOpen(false)}
-                className="p-1.5 text-gray-400 hover:text-gray-700 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer"
-                aria-label="Close dialog"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Quick 4-Step Guide */}
-            <div className="bg-[#FFF9F0] p-4 rounded-2xl border border-[#FF9933]/25 space-y-2 text-xs text-[#17324D]">
-              <div className="flex items-center gap-1.5 font-bold text-[#FF9933]">
-                <Info className="w-4 h-4" />
-                <span>Supabase se Video Connect karne ka 4-Step Tarika:</span>
-              </div>
-              <ol className="list-decimal list-inside space-y-1.5 text-gray-700 pl-1">
-                <li>
-                  <strong>supabase.com</strong> par login karein aur apna project open karein.
-                </li>
-                <li>
-                  Left menu me <strong>Storage</strong> par jayein aur <strong>"New Bucket"</strong> banayein (Naam: <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono text-[11px]">videos</code>) aur <strong>"Public bucket"</strong> ON rakhein.
-                </li>
-                <li>
-                  Bucket ke andar apni video file (<code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono text-[11px]">.mp4</code> ya <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono text-[11px]">.webm</code>) upload karein.
-                </li>
-                <li>
-                  File ke 3-dots menu par click karke <strong>"Get Public URL"</strong> copy karein aur neeche paste karein.
-                </li>
-              </ol>
-            </div>
-
-            {/* Video URL Input Field */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-[#17324D]">
-                Video URL (Supabase Link ya Project Public Path jaise /video.mp4):
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={tempVideoUrlInput}
-                  onChange={(e) => setTempVideoUrlInput(e.target.value)}
-                  placeholder="https://xyz.supabase.co/storage/v1/object/public/videos/satyavrata.mp4 ya /video.mp4"
-                  className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#FF9933] font-mono"
-                />
-                {tempVideoUrlInput && (
-                  <button
-                    onClick={() => setTempVideoUrlInput('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs px-1"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Quick Test Demo Video Helper */}
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-gray-50 rounded-2xl border border-gray-200">
-              <div className="text-[11px] text-gray-600">
-                <span className="font-bold text-[#17324D] block">Test karne ke liye ready sample chahiye?</span>
-                Ek click me sample video test kar sakte hain
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const sampleUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-                  setTempVideoUrlInput(sampleUrl);
-                }}
-                className="px-3 py-1.5 bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
-              >
-                Use Sample MP4 Video
-              </button>
-            </div>
-
-            {/* Vercel Environment Variables Note */}
-            <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200 text-xs text-emerald-900 space-y-1">
-              <div className="flex items-center gap-1.5 font-bold">
-                <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                <span>Vercel Permanent Deployment Tip:</span>
-              </div>
-              <p className="text-[11px] text-emerald-800">
-                Vercel par sabhi users ke liye permanently chalane ke liye, Vercel Dashboard me <strong>Project Settings → Environment Variables</strong> me ye add kar dein:
-              </p>
-              <code className="block bg-white p-2 rounded-lg font-mono text-[11px] text-[#17324D] border border-emerald-200 overflow-x-auto select-all">
-                VITE_LESSON_VIDEO_URL = {tempVideoUrlInput || 'https://xyz.supabase.co/storage/v1/object/public/videos/satyavrata.mp4'}
-              </code>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={() => handleSaveCustomVideoUrl('')}
-                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer"
-              >
-                Reset to Default Narrative
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSupabaseModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveCustomVideoUrl(tempVideoUrlInput)}
-                  className="px-5 py-2 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl shadow-xs transition-colors cursor-pointer"
-                >
-                  Save &amp; Play Video
-                </button>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
 
     </div>
   );
