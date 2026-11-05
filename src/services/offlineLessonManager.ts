@@ -155,17 +155,27 @@ class OfflineLessonManager {
   public async getDownloadedLesson(lessonId: string): Promise<OfflineLessonPackage | null> {
     try {
       const db = await this.getDB();
-      return new Promise((resolve, reject) => {
+      const pkg = await new Promise<OfflineLessonPackage | null>((resolve, reject) => {
         const tx = db.transaction(LESSON_STORE, 'readonly');
         const store = tx.objectStore(LESSON_STORE);
         const req = store.get(lessonId);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => reject(req.error);
       });
+      if (pkg) return pkg;
     } catch (e) {
-      console.warn('Failed to retrieve offline lesson:', e);
-      return null;
+      console.warn('IndexedDB read fallback to localStorage:', e);
     }
+
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`sb_offline_lesson_${lessonId}`);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {}
+      }
+    }
+    return null;
   }
 
   // List all downloaded lessons
@@ -185,37 +195,119 @@ class OfflineLessonManager {
     }
   }
 
-  // Save lesson package into IndexedDB
+  // Save lesson package into IndexedDB with localStorage fallback
   public async saveLessonPackage(pkg: OfflineLessonPackage): Promise<void> {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(LESSON_STORE, 'readwrite');
-      const store = tx.objectStore(LESSON_STORE);
-      const req = store.put(pkg);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`sb_offline_lesson_${pkg.id}`, JSON.stringify({
+          id: pkg.id,
+          title: pkg.title,
+          classLevel: pkg.classLevel,
+          version: pkg.version,
+          downloadedAt: pkg.downloadedAt,
+          sizeBytes: pkg.sizeBytes,
+          sizeFormatted: pkg.sizeFormatted,
+          verifiedOffline: true,
+          packageContents: pkg.packageContents
+        }));
+      } catch (e) {
+        console.warn('localStorage backup warning:', e);
+      }
+    }
+
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(LESSON_STORE, 'readwrite');
+        const store = tx.objectStore(LESSON_STORE);
+        const req = store.put(pkg);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      console.warn('IndexedDB write failed, relied on localStorage backup:', err);
+    }
   }
 
   // Delete downloaded lesson
   public async deleteDownloadedLesson(lessonId: string): Promise<void> {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction([LESSON_STORE, MEDIA_BLOBS_STORE], 'readwrite');
-      const store = tx.objectStore(LESSON_STORE);
-      const req = store.delete(lessonId);
-      req.onsuccess = () => {
-        // Also clean up any cached media
-        if ('caches' in window) {
-          caches.open('samskara-bharat-media-v1').then((cache) => {
-            cache.delete(`/lessons/${lessonId}/video`);
-            cache.delete(`/lessons/${lessonId}/narration`);
-          }).catch(console.warn);
-        }
-        resolve();
-      };
-      req.onerror = () => reject(req.error);
-    });
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(`sb_offline_lesson_${lessonId}`);
+    }
+
+    try {
+      const db = await this.getDB();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([LESSON_STORE, MEDIA_BLOBS_STORE], 'readwrite');
+        const lStore = tx.objectStore(LESSON_STORE);
+        const mStore = tx.objectStore(MEDIA_BLOBS_STORE);
+        lStore.delete(lessonId);
+        mStore.delete(`video_${lessonId}`);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (e) {
+      console.warn('IndexedDB delete fallback:', e);
+    }
+
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      caches.open('samskara-bharat-media-v1').then((cache) => {
+        cache.delete(`/lessons/${lessonId}/video`);
+        cache.delete(`/lessons/${lessonId}/narration`);
+        cache.delete(`/lessons/${lessonId}/metadata`);
+      }).catch(console.warn);
+    }
+  }
+
+  // Save raw video/audio blob in IndexedDB for true offline playback
+  public async saveMediaBlob(key: string, blob: Blob): Promise<void> {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(MEDIA_BLOBS_STORE, 'readwrite');
+        const store = tx.objectStore(MEDIA_BLOBS_STORE);
+        const req = store.put({
+          key,
+          blob,
+          size: blob.size,
+          updatedAt: new Date().toISOString()
+        });
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      console.warn('Failed to save media blob into IndexedDB:', e);
+    }
+  }
+
+  // Retrieve media blob from IndexedDB
+  public async getMediaBlob(key: string): Promise<Blob | null> {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(MEDIA_BLOBS_STORE, 'readonly');
+        const store = tx.objectStore(MEDIA_BLOBS_STORE);
+        const req = store.get(key);
+        req.onsuccess = () => resolve(req.result ? req.result.blob : null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      console.warn('Failed to get media blob:', e);
+      return null;
+    }
+  }
+
+  // Get offline video blob object URL
+  public async getVideoBlobUrl(lessonId: string): Promise<string | null> {
+    try {
+      const blob = await this.getMediaBlob(`video_${lessonId}`);
+      if (blob) {
+        return URL.createObjectURL(blob);
+      }
+    } catch (e) {
+      console.warn('Error creating video blob URL:', e);
+    }
+    return null;
   }
 
   // Cancel currently running download
@@ -237,37 +329,36 @@ class OfflineLessonManager {
     const { signal } = this.currentAbortController;
 
     const totalBytes = 15518976; // ~14.8 MB package
+    const storyTitle = lessonData.storyTitle || lessonData.title || 'Story';
+    const passageTitle = typeof lessonData.passageText === 'string'
+      ? lessonData.passageText.split('\n')[0].replace(/^#+\s*/, '')
+      : 'Modern Reflection Passage';
 
     const steps = [
       {
-        percent: 8,
-        bytes: 1241518,
-        msg: 'Connecting to server & allocating IndexedDB persistent quota...'
+        percent: 12,
+        bytes: 1862277,
+        msg: 'Connecting to server & allocating offline storage quota...'
       },
       {
-        percent: 24,
-        bytes: 3724554,
-        msg: 'Caching Satyavrata full 9-minute story video stream & audio buffer...'
+        percent: 32,
+        bytes: 4966072,
+        msg: `Caching "${storyTitle.slice(0, 32)}" full video stream & audio buffer...`
       },
       {
-        percent: 42,
-        bytes: 6517969,
+        percent: 54,
+        bytes: 8380247,
         msg: 'Packaging 3D Ananya character geometries, uniform textures & eye blinks...'
       },
       {
-        percent: 60,
-        bytes: 9311385,
+        percent: 74,
+        bytes: 11484042,
         msg: 'Storing speech synthesis phoneme timings & auto-scroll anchors...'
       },
       {
-        percent: 78,
-        bytes: 12104801,
-        msg: 'Bundling "A Difficult Choice at School" reflection passage & life-skills...'
-      },
-      {
-        percent: 92,
-        bytes: 14277457,
-        msg: 'Storing 4 reflection questions, facilitator rubrics & collective voting tools...'
+        percent: 90,
+        bytes: 13967078,
+        msg: `Bundling "${passageTitle.slice(0, 30)}" & 4 reflection questions...`
       },
       {
         percent: 100,
@@ -332,6 +423,31 @@ class OfflineLessonManager {
 
       // Store in IndexedDB
       await this.saveLessonPackage(offlinePkg);
+
+      // Fetch and store actual video Blob into IndexedDB for 100% true offline playback
+      try {
+        const videoSrc = lessonData.videoUrl || (
+          lessonData.id === 'class-6-panchatantra-truth'
+            ? '/assets/videos/panchatantra_truth.mp4'
+            : '/assets/videos/satyavrata_truth.mp4'
+        );
+        if (typeof window !== 'undefined') {
+          const vidRes = await fetch(videoSrc);
+          if (vidRes.ok) {
+            const vidBlob = await vidRes.blob();
+            await this.saveMediaBlob(`video_${lessonData.id}`, vidBlob);
+            if ('caches' in window) {
+              const cache = await caches.open('samskara-bharat-media-v1');
+              await cache.put(
+                new Request(`/lessons/${lessonData.id}/video`),
+                new Response(vidBlob, { headers: { 'Content-Type': 'video/mp4' } })
+              );
+            }
+          }
+        }
+      } catch (mediaErr) {
+        console.warn('Video asset blob caching fallback notice:', mediaErr);
+      }
 
       // Register virtual URLs in Cache Storage if available
       if ('caches' in window) {

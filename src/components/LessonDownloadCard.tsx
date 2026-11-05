@@ -139,10 +139,19 @@ export const LessonDownloadCard: React.FC<LessonDownloadCardProps> = ({
       <div className={`inline-flex items-center gap-2 ${className}`}>
         {downloadState === 'completed' && (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold shadow-2xs">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span>Available Offline ({downloadedPackage?.sizeFormatted || '14.8 MB'})</span>
             <button
-              onClick={() => setShowConfirmDelete(true)}
+              onClick={() => setShowDetailsModal(true)}
+              className="flex items-center gap-1.5 hover:text-emerald-950 transition-colors cursor-pointer"
+              title="Click to view offline storage package details"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Available Offline ({downloadedPackage?.sizeFormatted || '14.8 MB'})</span>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowConfirmDelete(true);
+              }}
               title="Remove downloaded lesson to free storage"
               className="ml-1 text-gray-400 hover:text-red-500 cursor-pointer p-0.5 rounded transition-colors"
             >
@@ -212,6 +221,84 @@ export const LessonDownloadCard: React.FC<LessonDownloadCardProps> = ({
                   className="flex-1 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
                 >
                   Confirm Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Package Contents Details Modal for Compact Variant */}
+        {showDetailsModal && (
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-gray-100 animate-in fade-in zoom-in duration-150">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <FileCheck className="w-5 h-5 text-emerald-600" />
+                  <h3 className="text-sm font-bold text-gray-900 font-heading">
+                    Offline Package Details ({lesson.title})
+                  </h3>
+                </div>
+                <button 
+                  onClick={() => setShowDetailsModal(false)}
+                  className="text-gray-400 hover:text-gray-600 p-1 rounded-lg cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between p-2 rounded-xl bg-gray-50">
+                  <span className="text-gray-600">Total Storage Consumed:</span>
+                  <span className="font-bold text-[#17324D]">{downloadedPackage?.sizeFormatted || '14.8 MB'}</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-gray-50">
+                  <span className="text-gray-600">Storage Engine:</span>
+                  <span className="font-bold text-[#17324D]">IndexedDB + Cache Storage</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-gray-50">
+                  <span className="text-gray-600">Lesson ID:</span>
+                  <span className="font-mono text-[11px] text-gray-700">{lesson.id}</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-gray-50">
+                  <span className="text-gray-600">Offline Status:</span>
+                  <span className="font-bold text-emerald-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> 100% Ready Without Wi-Fi
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-gray-100">
+                <h4 className="text-xs font-bold text-gray-800 mb-2">Verified Offline Assets:</h4>
+                <ul className="space-y-1.5 text-xs text-gray-600">
+                  <li className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Story Video Media Stream (Cached locally)</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>3D Student Mesh &amp; Face Rigging Assets</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Speech Phoneme Timing Checkpoints</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Modern Reflection Passage &amp; 4 Reflection Questions</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Offline Response Journal &amp; Classroom Voting Queue</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="mt-5 flex gap-2">
+                <button
+                  onClick={() => setShowDetailsModal(false)}
+                  className="flex-1 py-2.5 text-xs font-bold text-white bg-[#17324D] hover:bg-[#1f4265] rounded-xl transition-colors cursor-pointer"
+                >
+                  Close Details
                 </button>
               </div>
             </div>

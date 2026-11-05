@@ -52,7 +52,9 @@ import {
   Settings,
   AlertCircle,
   ExternalLink,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Zap,
+  Square
 } from 'lucide-react';
 import { LessonDownloadCard } from './LessonDownloadCard';
 import { DownloadedLessonsSection } from './DownloadedLessonsSection';
@@ -120,14 +122,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Helper to reliably resolve video URL for a lesson
   const getResolvedVideoUrl = (lessonId: string): string => {
     const saved = localStorage.getItem(`sb_custom_video_url_${lessonId}`);
-    if (saved && (saved.startsWith('http://') || saved.startsWith('https://') || saved.startsWith('blob:'))) {
+    // If the saved URL was the slow remote supabase url, upgrade to local zero-lag video
+    if (saved && !saved.includes('supabase.co') && (saved.startsWith('http://') || saved.startsWith('https://') || saved.startsWith('blob:') || saved.startsWith('/assets/'))) {
       return saved;
     }
     if (lessonId === satyavrataLesson.id) {
-      return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl;
+      return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl || '/assets/videos/satyavrata_truth.mp4';
     }
-    return (import.meta as any).env?.VITE_PANCHATANTRA_VIDEO_URL || panchatantraTruthLesson.videoUrl || '';
+    return (import.meta as any).env?.VITE_PANCHATANTRA_VIDEO_URL || panchatantraTruthLesson.videoUrl || '/assets/videos/panchatantra_truth.mp4';
   };
+
+  // Dilemma interactive choices & audio state
+  const [isNarratingSynopsis, setIsNarratingSynopsis] = useState(false);
+  const [dilemmaVote, setDilemmaVote] = useState<string | null>(() => {
+    return localStorage.getItem(`sb_dilemma_choice_${selectedLessonId}`) || null;
+  });
 
   // Network & Offline Storage Management State
   const [isOnline, setIsOnline] = useState<boolean>(() => offlineLessonManager.isNetworkOnline());
@@ -142,17 +151,40 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Keep customVideoUrl synchronized whenever selectedLessonId changes
   useEffect(() => {
-    setCustomVideoUrl(getResolvedVideoUrl(selectedLessonId));
+    let mounted = true;
+    offlineLessonManager.getVideoBlobUrl(selectedLessonId).then((blobUrl) => {
+      if (!mounted) return;
+      if (blobUrl) {
+        setCustomVideoUrl(blobUrl);
+      } else {
+        setCustomVideoUrl(getResolvedVideoUrl(selectedLessonId));
+      }
+    });
+    return () => {
+      mounted = false;
+    };
   }, [selectedLessonId]);
 
   const handleSelectLesson = (lessonId: string) => {
     setSelectedLessonId(lessonId);
     localStorage.setItem('sb_active_lesson_id', lessonId);
     setIsPlaying(false);
+    setIsBuffering(false);
     setVideoProgress(0);
     setVideoCurrentTime(0);
     setVideoError(null);
-    setCustomVideoUrl(getResolvedVideoUrl(lessonId));
+    offlineLessonManager.getVideoBlobUrl(lessonId).then((blobUrl) => {
+      if (blobUrl) {
+        setCustomVideoUrl(blobUrl);
+      } else {
+        setCustomVideoUrl(getResolvedVideoUrl(lessonId));
+      }
+    });
+    setDilemmaVote(localStorage.getItem(`sb_dilemma_choice_${lessonId}`) || null);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setIsNarratingSynopsis(false);
+    }
   };
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
@@ -437,6 +469,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const clickX = e.clientX - rect.left;
     const newPercent = Math.max(0, Math.min(100, Math.round((clickX / rect.width) * 100)));
     setVideoProgress(newPercent);
+    setIsBuffering(false);
     if (htmlVideoRef.current && customVideoUrl) {
       const dur = htmlVideoRef.current.duration || videoDuration || 540;
       const targetTime = (newPercent / 100) * dur;
@@ -450,6 +483,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       const cur = htmlVideoRef.current.currentTime;
       const dur = htmlVideoRef.current.duration || videoDuration || 540;
       setVideoCurrentTime(cur);
+      setIsBuffering(false);
       if (dur > 0) {
         setVideoProgress(Math.min(100, Math.round((cur / dur) * 100)));
       }
@@ -466,7 +500,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const handleHtmlVideoEnded = () => {
     setIsPlaying(false);
     setVideoProgress(100);
-    handleMarkVideoCompleted();
+    if (!progress.completedVideos.includes(lesson.id)) {
+      handleToggleVideoCompleted();
+    }
   };
 
   const totalDurationSec = customVideoUrl && videoDuration > 0 ? Math.floor(videoDuration) : 9 * 60;
@@ -620,8 +656,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   // Explicit Progress Actions (Opening a page does not automatically mark complete!)
-  const handleMarkVideoCompleted = () => {
-    if (!progress.completedVideos.includes(lesson.id)) {
+  const handleToggleVideoCompleted = () => {
+    const isCompleted = progress.completedVideos.includes(lesson.id);
+    if (!isCompleted) {
       setProgress((prev) => {
         const updated = {
           ...prev,
@@ -630,10 +667,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         checkLessonCompletion(updated);
         return updated;
       });
-      showToast('Satyavrata story video marked as completed.');
+      showToast(`🎉 "${lesson.storyTitle || lesson.title}" marked as watched!`);
     } else {
-      showToast('Video is already recorded as completed.');
+      setProgress((prev) => ({
+        ...prev,
+        completedVideos: prev.completedVideos.filter((id) => id !== lesson.id),
+      }));
+      showToast(`Unmarked video for "${lesson.storyTitle || lesson.title}".`);
     }
+  };
+
+  const handleToggleSynopsisNarration = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      showToast('Speech audio narration is not supported in this browser.');
+      return;
+    }
+    if (isNarratingSynopsis) {
+      window.speechSynthesis.cancel();
+      setIsNarratingSynopsis(false);
+      showToast('Audio narration stopped.');
+    } else {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(lesson.videoSynopsis);
+      utterance.rate = 0.95;
+      utterance.pitch = 1.0;
+      utterance.onend = () => setIsNarratingSynopsis(false);
+      utterance.onerror = () => setIsNarratingSynopsis(false);
+      window.speechSynthesis.speak(utterance);
+      setIsNarratingSynopsis(true);
+      showToast('🔊 Playing story dilemma audio narration...');
+    }
+  };
+
+  const handleSelectDilemmaChoice = (choice: string) => {
+    setDilemmaVote(choice);
+    localStorage.setItem(`sb_dilemma_choice_${lesson.id}`, choice);
+    showToast('Your perspective has been recorded in your reflection journal!');
   };
 
   const handleMarkPassageCompleted = () => {
@@ -759,6 +828,29 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             >
               <Home className="w-3.5 h-3.5" />
               <span>Entrance Page</span>
+            </button>
+
+            {/* Online / Offline Simulator Toggle */}
+            <button
+              onClick={handleToggleSimulatedOffline}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs ${
+                isOnline
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                  : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+              }`}
+              title={isOnline ? 'Network Online. Click to simulate Offline Mode' : 'Simulating Offline Mode. Click to switch Online'}
+            >
+              {isOnline ? (
+                <>
+                  <Wifi className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">Online</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-amber-700 animate-pulse" />
+                  <span>Offline Mode</span>
+                </>
+              )}
             </button>
 
             {/* Student Avatar Capsule */}
@@ -1444,17 +1536,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         setIsPlaying(false);
                         setAreControlsVisible(true);
                       }}
-                      onWaiting={() => setIsBuffering(true)}
+                      onWaiting={() => {
+                        if (isPlaying) {
+                          setIsBuffering(true);
+                        }
+                      }}
                       onPlaying={() => setIsBuffering(false)}
                       onCanPlay={() => setIsBuffering(false)}
+                      onCanPlayThrough={() => setIsBuffering(false)}
+                      onSeeked={() => setIsBuffering(false)}
+                      onSeeking={() => setIsBuffering(false)}
                       onTimeUpdate={handleHtmlVideoTimeUpdate}
                       onLoadedMetadata={handleHtmlVideoLoadedMetadata}
                       onEnded={handleHtmlVideoEnded}
                       onError={() => {
-                        if (lesson.id === satyavrataLesson.id && customVideoUrl !== satyavrataLesson.videoUrl) {
-                          setCustomVideoUrl(satyavrataLesson.videoUrl || '');
+                        const localFallback = lesson.id === satyavrataLesson.id 
+                          ? '/assets/videos/satyavrata_truth.mp4' 
+                          : '/assets/videos/panchatantra_truth.mp4';
+                        if (customVideoUrl !== localFallback) {
+                          setCustomVideoUrl(localFallback);
+                          showToast('Switched to local video fallback.');
                         } else {
-                          setVideoError('Video stream connection active. Click play or refresh if paused.');
+                          setVideoError('Video playback ready. Click play to begin.');
                         }
                         setIsPlaying(false);
                         setIsBuffering(false);
@@ -1484,8 +1587,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                   {/* Loading / Buffering Spinner */}
                   {isBuffering && isPlaying && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-                      <div className="w-14 h-14 rounded-full border-4 border-white/20 border-t-[#FF9933] animate-spin shadow-2xl" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-30 bg-black/40 backdrop-blur-2xs">
+                      <div className="w-12 h-12 rounded-full border-4 border-white/20 border-t-[#FF9933] animate-spin shadow-2xl" />
+                      <span className="mt-2.5 text-[11px] font-semibold text-white/90 bg-black/70 px-3 py-1 rounded-full backdrop-blur-xs">
+                        Buffering video stream...
+                      </span>
                     </div>
                   )}
 
@@ -1716,17 +1822,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
 
                   <button
-                    onClick={handleMarkVideoCompleted}
-                    className={`px-5 py-2.5 text-xs font-bold rounded-xl flex items-center gap-2 transition-all cursor-pointer ${
+                    onClick={handleToggleVideoCompleted}
+                    className={`px-5 py-2.5 text-xs font-bold rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-xs active:scale-98 ${
                       progress.completedVideos.includes(lesson.id)
-                        ? 'bg-green-100 text-green-800 border border-green-300'
-                        : 'bg-[#22A06B] hover:bg-[#1b8256] text-white shadow-xs'
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white ring-2 ring-emerald-400/40'
+                        : 'bg-[#22A06B] hover:bg-[#1b8256] text-white'
                     }`}
+                    title={
+                      progress.completedVideos.includes(lesson.id)
+                        ? 'Click to reset or mark uncompleted'
+                        : 'Click to mark video as watched'
+                    }
                   >
-                    <CheckCircle2 className="w-4 h-4" />
+                    <CheckCircle2 className={`w-4 h-4 ${progress.completedVideos.includes(lesson.id) ? 'text-white' : 'text-emerald-100'}`} />
                     <span>
                       {progress.completedVideos.includes(lesson.id)
-                        ? 'Video Completed ✓'
+                        ? 'Watched ✓ (Click to reset)'
                         : 'Mark Video as Watched'}
                     </span>
                   </button>
@@ -1752,95 +1863,261 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       setNewVideoUrlInput(customVideoUrl);
                       setVideoSourceModalOpen(!videoSourceModalOpen);
                     }}
-                    className="hover:text-[#FF9933] flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold"
+                    className="hover:text-[#FF9933] flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold text-[#17324D]/80"
                   >
                     <Settings className="w-3.5 h-3.5 text-[#FF9933]" />
                     <span>Video file location &amp; custom URL settings</span>
                   </button>
-                  <span className="text-[11px] text-gray-400 hidden sm:inline">
-                    {customVideoUrl.startsWith('/assets/') ? 'Local File' : customVideoUrl ? 'Cloud Storage' : 'Default Canvas'}
-                  </span>
+
+                  <div>
+                    {customVideoUrl.startsWith('/assets/') ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold shadow-2xs">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <Zap className="w-3 h-3 text-emerald-600" />
+                        <span>Local High-Speed Video (Zero-Lag ⚡)</span>
+                      </span>
+                    ) : customVideoUrl.includes('supabase.co') ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-[11px] font-semibold">
+                        <span>Cloud Storage (Supabase CDN)</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold">
+                        <span>Custom Video Stream</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {videoSourceModalOpen && (
-                  <div className="mt-3 p-4 rounded-2xl bg-[#FFF9F0] border border-[#FF9933]/30 text-xs space-y-3 animate-in fade-in duration-150">
+                  <div className="mt-3 p-5 rounded-2xl bg-[#FFF9F0] border border-[#FF9933]/30 text-xs space-y-4 animate-in fade-in duration-150 shadow-sm">
                     <div className="flex items-center justify-between font-bold text-[#17324D]">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2">
                         <HardDrive className="w-4 h-4 text-[#22A06B]" />
-                        <span>Where to put video files in the website (Project Location):</span>
+                        <span className="text-sm">Video Source &amp; Performance Manager:</span>
                       </div>
                       <button
                         onClick={() => setVideoSourceModalOpen(false)}
-                        className="text-gray-400 hover:text-gray-700 p-0.5 rounded cursor-pointer"
+                        className="text-gray-400 hover:text-gray-700 p-1 rounded-lg cursor-pointer"
                       >
-                        <X className="w-3.5 h-3.5" />
+                        <X className="w-4 h-4" />
                       </button>
                     </div>
-                    <p className="text-gray-600 font-mono text-[11px] bg-white p-2 rounded border border-gray-200">
-                      /public/assets/videos/{selectedLessonId === 'class-6-panchatantra-truth' ? 'panchatantra_truth.mp4' : 'satyavrata_truth.mp4'}
-                    </p>
-                    <p className="text-gray-500">
-                      Place your video in <code className="text-[#FF9933]">/public/assets/videos/</code> or paste any cloud URL below:
-                    </p>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        value={newVideoUrlInput}
-                        onChange={(e) => setNewVideoUrlInput(e.target.value)}
-                        placeholder="https://... or /assets/videos/your_video.mp4"
-                        className="grow px-3 py-1.5 text-xs rounded-xl border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-[#FF9933]"
-                      />
+
+                    {/* 1-Click Fast Presets */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* Local High Speed Card */}
                       <button
+                        type="button"
                         onClick={() => {
-                          const val = newVideoUrlInput.trim();
-                          setCustomVideoUrl(val);
-                          localStorage.setItem(`sb_custom_video_url_${lesson.id}`, val);
-                          setVideoSourceModalOpen(false);
-                          showToast(`Updated video source for ${lesson.title}`);
+                          const localUrl = selectedLessonId === 'class-6-panchatantra-truth'
+                            ? '/assets/videos/panchatantra_truth.mp4'
+                            : '/assets/videos/satyavrata_truth.mp4';
+                          localStorage.setItem(`sb_custom_video_url_${lesson.id}`, localUrl);
+                          setCustomVideoUrl(localUrl);
+                          setNewVideoUrlInput(localUrl);
+                          setIsBuffering(false);
                           setIsPlaying(false);
-                          setVideoProgress(0);
+                          showToast('⚡ Switched to Local High-Speed Video! Zero lag and instant seeks enabled.');
                         }}
-                        className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl cursor-pointer"
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          customVideoUrl.startsWith('/assets/')
+                            ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20 shadow-xs'
+                            : 'bg-white border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/30'
+                        }`}
                       >
-                        Save
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[#17324D] flex items-center gap-1.5">
+                            <Zap className="w-4 h-4 text-emerald-600" />
+                            <span>Local Video Asset (Recommended)</span>
+                          </span>
+                          {customVideoUrl.startsWith('/assets/') && (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">Active</span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-1">
+                          Served directly from <code className="text-emerald-700 font-mono">/public/assets/videos/</code>. Zero buffering, no internet dependency.
+                        </p>
                       </button>
-                      {lesson.id === satyavrataLesson.id && (
+
+                      {/* Cloud Stream Preset */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cloudUrl = selectedLessonId === 'class-6-panchatantra-truth'
+                            ? 'https://sueccxsiimptiaingzjg.supabase.co/storage/v1/object/public/videos/panchatantra_truth.mp4'
+                            : 'https://sueccxsiimptiaingzjg.supabase.co/storage/v1/object/public/videos/Team-Integrity-SnapYT.App.mp4';
+                          localStorage.setItem(`sb_custom_video_url_${lesson.id}`, cloudUrl);
+                          setCustomVideoUrl(cloudUrl);
+                          setNewVideoUrlInput(cloudUrl);
+                          setIsBuffering(false);
+                          setIsPlaying(false);
+                          showToast('Switched to Cloud Storage CDN stream.');
+                        }}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          customVideoUrl.includes('supabase.co')
+                            ? 'bg-sky-50 border-sky-300 ring-2 ring-sky-500/20 shadow-xs'
+                            : 'bg-white border-gray-200 hover:border-sky-300 hover:bg-sky-50/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[#17324D] flex items-center gap-1.5">
+                            <Database className="w-4 h-4 text-sky-600" />
+                            <span>Cloud Storage CDN (Supabase)</span>
+                          </span>
+                          {customVideoUrl.includes('supabase.co') && (
+                            <span className="text-[10px] font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-full">Active</span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-1">
+                          Original remote cloud stream hosted on Supabase Storage. Requires stable high-speed Wi-Fi.
+                        </p>
+                      </button>
+                    </div>
+
+                    {/* Custom URL Input Field */}
+                    <div className="pt-2 border-t border-[#FF9933]/15 space-y-1.5">
+                      <span className="font-semibold text-gray-700 block text-[11px]">Or specify custom stream URL / local asset path:</span>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={newVideoUrlInput}
+                          onChange={(e) => setNewVideoUrlInput(e.target.value)}
+                          placeholder="/assets/videos/... or https://..."
+                          className="grow px-3 py-1.5 text-xs rounded-xl border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-[#FF9933] font-mono"
+                        />
                         <button
                           onClick={() => {
-                            localStorage.removeItem(`sb_custom_video_url_${satyavrataLesson.id}`);
-                            setCustomVideoUrl(satyavrataLesson.videoUrl || '');
-                            setNewVideoUrlInput(satyavrataLesson.videoUrl || '');
-                            setVideoSourceModalOpen(false);
-                            showToast('Reset to official Satyavrata Supabase video stream');
+                            const val = newVideoUrlInput.trim();
+                            if (val) {
+                              setCustomVideoUrl(val);
+                              localStorage.setItem(`sb_custom_video_url_${lesson.id}`, val);
+                              setVideoSourceModalOpen(false);
+                              showToast(`Video source updated for ${lesson.title}`);
+                              setIsPlaying(false);
+                              setIsBuffering(false);
+                              setVideoProgress(0);
+                            }
                           }}
-                          className="px-3 py-1.5 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer whitespace-nowrap"
+                          className="px-4 py-1.5 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl cursor-pointer"
                         >
-                          Reset to Official Video
+                          Save &amp; Apply
                         </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 )}
 
-                {/* Story Ethical Dilemma Exposition (Does NOT reveal conclusion early!) */}
-                <div className="mt-6 p-5 rounded-2xl bg-[#FFF9F0] border border-[#FF9933]/20 space-y-3">
-                  <h4 className="text-xs font-bold text-[#17324D] uppercase tracking-wider flex items-center gap-2">
-                    <Info className="w-4 h-4 text-[#FF9933]" />
-                    <span>Story Context &amp; The Dilemma</span>
-                  </h4>
+                {/* Story Ethical Dilemma Exposition & Interactive Crossroads */}
+                <div className="mt-6 p-5 sm:p-6 rounded-3xl bg-[#FFF9F0] border border-[#FF9933]/25 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-[#FF9933]/20">
+                    <h4 className="text-xs font-bold text-[#17324D] uppercase tracking-wider flex items-center gap-2">
+                      <Info className="w-4 h-4 text-[#FF9933]" />
+                      <span>Story Context &amp; The Dilemma</span>
+                    </h4>
+
+                    {/* Speech Narration Button */}
+                    <button
+                      onClick={handleToggleSynopsisNarration}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white border border-[#FF9933]/40 text-[#17324D] hover:bg-[#FFEEDB] text-xs font-bold transition-all shadow-2xs cursor-pointer self-start sm:self-auto"
+                      title={isNarratingSynopsis ? 'Stop Audio Narration' : 'Listen to Dilemma Narration'}
+                    >
+                      {isNarratingSynopsis ? (
+                        <>
+                          <Square className="w-3.5 h-3.5 text-red-600 fill-red-600 animate-pulse" />
+                          <span className="text-red-700">Stop Audio</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5 text-[#FF9933]" />
+                          <span>Listen to Dilemma (Audio)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
                   <p className="text-xs sm:text-sm text-gray-700 leading-relaxed font-sans">
                     {lesson.videoSynopsis}
                   </p>
-                  <p className="text-xs font-semibold text-[#17324D] pt-1 border-t border-[#FF9933]/15">
-                    Notice: The conclusion is intentionally held until after your reflection. Move to the separate modern reflection passage to explore this ethical knot.
+
+                  {/* Interactive Crossroads Choices */}
+                  <div className="pt-3 border-t border-[#FF9933]/15 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-[#17324D] flex items-center gap-1.5">
+                        <Compass className="w-3.5 h-3.5 text-[#FF9933]" />
+                        <span>The Crossroads: What would you advise before watching the resolution?</span>
+                      </span>
+                      {dilemmaVote && (
+                        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                          Choice Recorded ✓
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                      {/* Choice A */}
+                      <button
+                        type="button"
+                        onClick={() => handleSelectDilemmaChoice('choice_a')}
+                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          dilemmaVote === 'choice_a'
+                            ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-500/20 shadow-xs'
+                            : 'bg-white border-gray-200 hover:border-[#22A06B]/50 hover:bg-emerald-50/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between font-bold text-[#17324D]">
+                          <span>Option A: Vivek &amp; Calm Investigation</span>
+                          {dilemmaVote === 'choice_a' && (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
+                          {selectedLessonId === 'class-6-panchatantra-truth'
+                            ? 'Examine physical evidence and test the hollow tree with smoke instead of accepting confident accusations blindly.'
+                            : 'Protect the innocent creature’s life with compassionate silence or intelligent discernment rather than causing cruel slaughter.'}
+                        </p>
+                      </button>
+
+                      {/* Choice B */}
+                      <button
+                        type="button"
+                        onClick={() => handleSelectDilemmaChoice('choice_b')}
+                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          dilemmaVote === 'choice_b'
+                            ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-500/20 shadow-xs'
+                            : 'bg-white border-gray-200 hover:border-[#FF9933]/50 hover:bg-amber-50/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between font-bold text-[#17324D]">
+                          <span>Option B: Immediate Group Reaction</span>
+                          {dilemmaVote === 'choice_b' && (
+                            <CheckCircle2 className="w-4 h-4 text-amber-600" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
+                          {selectedLessonId === 'class-6-panchatantra-truth'
+                            ? 'Trust the aggressive confidence and apparent witness without demanding physical verification.'
+                            : 'Speak literal truth regardless of the cruel outcome, letting the hunter kill the terrified deer.'}
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs font-semibold text-[#17324D] pt-2 border-t border-[#FF9933]/15">
+                    Notice: The full resolution is explored through our reflection inquiry. Move to the modern reflection passage to examine how this dilemma plays out in 21st-century school life.
                   </p>
                 </div>
 
                 {/* Navigation forward to next step */}
                 <div className="mt-6 flex justify-end">
                   <button
-                    onClick={() => setActiveTab('passages')}
-                    className="px-5 py-2.5 text-xs font-bold text-white bg-[#38BDF8] hover:bg-[#20a4df] rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                    onClick={() => {
+                      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                        window.speechSynthesis.cancel();
+                        setIsNarratingSynopsis(false);
+                      }
+                      setActiveTab('passages');
+                    }}
+                    className="px-6 py-3 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-[#38BDF8] to-[#0284c7] hover:brightness-105 active:scale-98 rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-sm"
                   >
                     <span>Proceed to Modern Reflection Passage</span>
                     <ArrowRight className="w-4 h-4" />

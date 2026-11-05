@@ -13,7 +13,7 @@ export const panchatantraTruthLesson: Lesson = {
   videoThumbnailGradient: 'from-[#22A06B]/35 via-[#38BDF8]/20 to-[#FF9933]/30',
   videoSynopsis:
     'Two companions, Dharma Buddhi (the virtuous) and Papa Buddhi (the wicked), earn great wealth and bury their shared treasure pot beneath an ancient banyan tree before entering their village. That very night, Papa Buddhi sneaks back, digs up the entire gold treasure, and steals it. Later, finding the pit empty, Papa Buddhi boldly points a finger and accuses innocent Dharma Buddhi of theft! Before the village elders, Papa Buddhi claims the sacred banyan tree itself will bear witness. Having secretly hidden his own father inside the tree trunk hollow, a ghostly voice emerges falsely proclaiming Dharma Buddhi the thief! While the elders prepare to punish the innocent, Dharma Buddhi remains calm and discerning. Suspecting human trickery, he piles dry leaves at the tree hollow and lights a smoke fire. The coughing father stumbles out, begging forgiveness and exposing his son’s greedy scheme. Papa Buddhi is punished, proving that truth cannot be fabricated by confident lies or false witnesses: facts and careful investigation alone establish the truth.',
-  videoUrl: (import.meta as any).env?.VITE_PANCHATANTRA_VIDEO_URL || 'https://sueccxsiimptiaingzjg.supabase.co/storage/v1/object/public/videos/panchatantra_truth.mp4',
+  videoUrl: (import.meta as any).env?.VITE_PANCHATANTRA_VIDEO_URL || '/assets/videos/panchatantra_truth.mp4',
   passageText:
 `The Missing Science Fair Pen Drive & The Confident Accusation
 
