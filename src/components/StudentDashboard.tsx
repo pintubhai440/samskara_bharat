@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { availableAvatars } from '../data/avatarsData';
 import { satyavrataLesson, satyavrataExplanationParts } from '../data/satyavrataLesson';
+import { panchatantraTruthLesson, panchatantraExplanationParts } from '../data/panchatantraTruthLesson';
 import { initialBadges } from '../data/lessonsData';
 import { PassageExperience } from './PassageExperience';
 import { GuidedExplanationExperience } from './GuidedExplanationExperience';
@@ -57,6 +58,36 @@ import { LessonDownloadCard } from './LessonDownloadCard';
 import { DownloadedLessonsSection } from './DownloadedLessonsSection';
 import { offlineLessonManager } from '../services/offlineLessonManager';
 
+export const class6ChapterTruth = {
+  classLevel: 'Class 6',
+  chapterNumber: '01',
+  chapterName: 'Truth',
+  sanskritName: 'सत्य (Satya / Satyavākyaḥ)',
+  description: 'Cultivating unshakeable truthfulness, honesty when unobserved, and the courage to protect the innocent.',
+  lessons: [
+    {
+      order: '01',
+      id: satyavrataLesson.id,
+      title: 'Satyavrata: The Dilemma of Truth',
+      storyTitle: 'Satyavrata & The Hunter: When Truth Meets Compassion',
+      lesson: satyavrataLesson,
+      explanationParts: satyavrataExplanationParts,
+      source: 'Mahabharata',
+      badge: 'Satyavrata (सत्यव्रत)'
+    },
+    {
+      order: '02',
+      id: panchatantraTruthLesson.id,
+      title: 'Panchatantra: Dharma Buddhi & Papa Buddhi',
+      storyTitle: 'Dharma Buddhi & Papa Buddhi: The False Witness & The Triumph of Truth',
+      lesson: panchatantraTruthLesson,
+      explanationParts: panchatantraExplanationParts,
+      source: 'Panchatantra',
+      badge: 'Panchatantra (पंचतंत्र)'
+    }
+  ]
+};
+
 interface StudentDashboardProps {
   user: StudentUser;
   onLogout: () => void;
@@ -74,18 +105,55 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [learningMode, setLearningMode] = useState<LearningMode>('individual');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
+  // Class 6 Chapter: Truth selection (Default: Satyavrata)
+  const [selectedLessonId, setSelectedLessonId] = useState<string>(() => {
+    // Default firmly to Satyavrata so its story and video are always ready on start
+    return satyavrataLesson.id;
+  });
+  const [videoSourceModalOpen, setVideoSourceModalOpen] = useState(false);
+  const [newVideoUrlInput, setNewVideoUrlInput] = useState('');
+
+  const activeChapterItem = class6ChapterTruth.lessons.find((l) => l.id === selectedLessonId) || class6ChapterTruth.lessons[0];
+  const lesson = activeChapterItem.lesson;
+  const currentExplanationParts = activeChapterItem.explanationParts;
+
+  // Helper to reliably resolve video URL for a lesson
+  const getResolvedVideoUrl = (lessonId: string): string => {
+    const saved = localStorage.getItem(`sb_custom_video_url_${lessonId}`);
+    if (saved && (saved.startsWith('http://') || saved.startsWith('https://') || saved.startsWith('blob:'))) {
+      return saved;
+    }
+    if (lessonId === satyavrataLesson.id) {
+      return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl;
+    }
+    return (import.meta as any).env?.VITE_PANCHATANTRA_VIDEO_URL || panchatantraTruthLesson.videoUrl || '';
+  };
+
   // Network & Offline Storage Management State
   const [isOnline, setIsOnline] = useState<boolean>(() => offlineLessonManager.isNetworkOnline());
   const [simulatedOffline, setSimulatedOffline] = useState<boolean>(() => offlineLessonManager.isSimulatingOffline());
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Video player state & Supabase Storage integration
+  // Video player state & Supabase / Local / Custom Video integration
   const [customVideoUrl, setCustomVideoUrl] = useState<string>(() => {
-    const saved = localStorage.getItem(`sb_custom_video_url_${satyavrataLesson.id}`);
-    if (saved) return saved;
-    return (import.meta as any).env?.VITE_LESSON_VIDEO_URL || satyavrataLesson.videoUrl || '';
+    return getResolvedVideoUrl(satyavrataLesson.id);
   });
+
+  // Keep customVideoUrl synchronized whenever selectedLessonId changes
+  useEffect(() => {
+    setCustomVideoUrl(getResolvedVideoUrl(selectedLessonId));
+  }, [selectedLessonId]);
+
+  const handleSelectLesson = (lessonId: string) => {
+    setSelectedLessonId(lessonId);
+    localStorage.setItem('sb_active_lesson_id', lessonId);
+    setIsPlaying(false);
+    setVideoProgress(0);
+    setVideoCurrentTime(0);
+    setVideoError(null);
+    setCustomVideoUrl(getResolvedVideoUrl(lessonId));
+  };
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
@@ -328,6 +396,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea') return;
 
+      // Prevent developer inspect shortcuts when on video player
+      if (
+        e.key === 'F12' ||
+        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c' || e.key === 'J' || e.key === 'j')) ||
+        (e.ctrlKey && (e.key === 'u' || e.key === 'U' || e.key === 's' || e.key === 'S')) ||
+        (e.metaKey && e.altKey && (e.key === 'i' || e.key === 'I' || e.key === 'u' || e.key === 'U'))
+      ) {
+        e.preventDefault();
+        showQuickFeedback('🔒 Protected Video Stream');
+        return;
+      }
+
       if (e.code === 'Space' || e.key === 'k' || e.key === 'K') {
         e.preventDefault();
         handleTogglePlay();
@@ -496,7 +576,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
-  const lesson = satyavrataLesson;
+  // lesson is dynamically bound from activeChapterItem above
   const currentAvatar = availableAvatars.find((a) => a.id === user.avatarId) || availableAvatars[0];
 
   // Sync progress & check badge unlock
@@ -822,6 +902,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Chapter: Truth Active Lesson Switcher */}
+            <div className="mt-3 pt-3 border-t border-gray-100 px-3 py-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
+                Class 6 · Chapter: Truth
+              </span>
+              <div className="space-y-1">
+                {class6ChapterTruth.lessons.map((item) => {
+                  const isSelected = selectedLessonId === item.id;
+                  const isDone = progress.completedLessons.includes(item.id);
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleSelectLesson(item.id)}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#FF9933] text-white shadow-xs'
+                          : 'text-gray-700 hover:bg-[#FFF9F0] hover:text-[#FF9933]'
+                      }`}
+                    >
+                      <span className="truncate">{item.badge}</span>
+                      {isDone && <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-white' : 'text-[#22A06B]'}`} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </aside>
 
@@ -838,18 +945,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                   <div className="inline-flex items-center gap-2 text-xs font-bold text-[#FF9933] uppercase">
                     <Sparkles className="w-4 h-4" />
-                    <span>Featured Prototype Lesson</span>
+                    <span>Class 6 · Chapter: Truth (सत्य)</span>
                   </div>
-                  <span className="text-xs font-bold text-[#22A06B] bg-[#22A06B]/10 px-3 py-1 rounded-full self-start sm:self-auto">
-                    Class 6 Prototype
-                  </span>
+
+                  {/* Clean Lesson Switcher Pill on Hero Card */}
+                  <div className="flex items-center gap-1.5 p-1 bg-white/80 backdrop-blur-xs rounded-2xl border border-[#FF9933]/30 shadow-2xs">
+                    {class6ChapterTruth.lessons.map((item) => {
+                      const isSelected = selectedLessonId === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => handleSelectLesson(item.id)}
+                          className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#FF9933] text-white shadow-2xs'
+                              : 'text-gray-700 hover:text-[#FF9933] hover:bg-[#FFF9F0]'
+                          }`}
+                        >
+                          {item.badge}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-[#17324D] font-heading">
                   {lesson.title}
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-600 mt-2 max-w-2xl leading-relaxed">
-                  Explore the classic ethical dilemma of truth and compassion, followed by a separate relatable modern school dilemma, four probing reflection questions, and a four-part guided explanation.
+                  {lesson.videoSynopsis}
                 </p>
 
                 <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -858,7 +982,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     className="px-5 py-2.5 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
-                    <span>Watch Satyavrata Story Video</span>
+                    <span>Watch Story Video</span>
                   </button>
 
                   <button
@@ -879,10 +1003,75 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </div>
 
+              {/* Both Chapter Truth Lessons displayed side-by-side */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-base font-bold text-[#17324D] font-heading flex items-center gap-2">
+                    <GraduationCap className="w-4 h-4 text-[#FF9933]" />
+                    <span>Chapter: Truth — Available Lessons</span>
+                  </h3>
+                  <span className="text-xs text-gray-500 font-semibold hidden sm:inline">
+                    Click any lesson card to select &amp; study
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {class6ChapterTruth.lessons.map((item) => {
+                    const isSelected = selectedLessonId === item.id;
+                    const isCompleted = progress.completedLessons.includes(item.id);
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => handleSelectLesson(item.id)}
+                        className={`p-5 rounded-3xl bg-white border transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-[#FF9933] ring-2 ring-[#FF9933]/25 shadow-md bg-gradient-to-br from-white to-[#FF9933]/5'
+                            : 'border-gray-200 hover:border-[#FF9933]/40 shadow-2xs'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="text-[11px] font-extrabold text-[#FF9933] bg-[#FF9933]/15 px-2.5 py-0.5 rounded-full">
+                              {item.badge}
+                            </span>
+                            {isSelected ? (
+                              <span className="text-[11px] font-bold text-[#22A06B] bg-[#22A06B]/15 px-2.5 py-0.5 rounded-full">
+                                Currently Selected ✓
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-semibold text-gray-400 hover:text-[#17324D]">
+                                Click to Study
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-base font-bold text-[#17324D] font-heading">
+                            {item.lesson.title}
+                          </h4>
+                          <p className="text-xs text-[#22A06B] font-semibold mt-0.5">
+                            {item.storyTitle}
+                          </p>
+                          <p className="text-xs text-gray-600 line-clamp-2 mt-2 leading-relaxed">
+                            {item.lesson.videoSynopsis}
+                          </p>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+                          <span className="text-gray-500">{item.source} · {item.lesson.durationMinutes} mins</span>
+                          <span className="font-bold text-[#FF9933] flex items-center gap-1">
+                            {isSelected ? 'Open Lesson' : 'Select'}
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Dedicated Download Card for Class 6 Lesson */}
               <LessonDownloadCard
                 lesson={lesson}
-                explanationParts={satyavrataExplanationParts}
+                explanationParts={currentExplanationParts}
                 variant="card"
               />
 
@@ -1016,96 +1205,178 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           )}
 
           {/* ========================================================
-              2. CLASSES: SINGLE PROTOTYPE LESSON (CLASS 6)
+              2. CLASSES: CLASS 6 — CHAPTER: TRUTH (PANCHATANTRA & SATYAVRATA)
              ======================================================== */}
           {activeTab === 'classes' && (
             <div className="space-y-6 animate-in fade-in duration-200">
+              {/* Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-bold text-[#17324D] font-heading">
-                    Classes Curriculum
+                  <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                    <span>Classes</span>
+                    <span>/</span>
+                    <span className="text-[#FF9933]">Class 6th</span>
+                    <span>/</span>
+                    <span className="text-[#22A06B]">Chapter 01</span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#17324D] font-heading flex items-center gap-2">
+                    <GraduationCap className="w-7 h-7 text-[#FF9933]" />
+                    <span>Class 6 — Chapter: Truth (सत्य)</span>
                   </h2>
-                  <p className="text-xs sm:text-sm text-gray-500">
-                    Prototype Active: Class 6 — Satyavrata: The Dilemma of Truth
+                  <p className="text-xs sm:text-sm text-gray-600 mt-1">
+                    Guna: Satyavākyaḥ (Truthfulness &amp; Integrity) · 2 Structured Dilemma Lessons
                   </p>
                 </div>
-                <div className="text-xs font-bold text-[#FF9933] bg-[#FF9933]/10 px-3 py-1 rounded-full">
-                  1 Available Lesson in Prototype
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-[#22A06B] bg-[#22A06B]/10 px-3 py-1.5 rounded-full">
+                    2 Chapter Lessons
+                  </span>
                 </div>
               </div>
 
-              {/* Class 6 Badge */}
-              <div className="p-6 rounded-3xl bg-white border border-[#FF9933]/30 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#22A06B] bg-[#22A06B]/10 px-3 py-1 rounded-full">
-                    Class 6 Active Lesson
-                  </span>
-                  {progress.completedLessons.includes(lesson.id) && (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-[#22A06B] bg-[#22A06B]/15 px-3 py-1 rounded-full">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Lesson Mastered</span>
-                    </span>
-                  )}
-                </div>
-
-                <h3 className="text-xl font-bold text-[#17324D] font-heading">
-                  {lesson.title}
+              {/* Chapter Description Card */}
+              <div className="p-6 rounded-3xl bg-gradient-to-br from-[#FFF9F0] via-white to-[#22A06B]/10 border border-[#FF9933]/30 shadow-xs">
+                <span className="text-xs font-bold text-[#FF9933] uppercase tracking-wider block mb-1">
+                  Chapter Foundation
+                </span>
+                <h3 className="text-lg font-bold text-[#17324D] font-heading">
+                  {class6ChapterTruth.sanskritName}
                 </h3>
-                <p className="text-xs sm:text-sm text-gray-600 leading-relaxed font-sans">
-                  {lesson.videoSynopsis}
+                <p className="text-xs sm:text-sm text-gray-700 mt-1 leading-relaxed">
+                  {class6ChapterTruth.description}
                 </p>
+              </div>
 
-                {/* 4 Separate Activity Statuses */}
-                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold pt-2">
-                  <span className={`px-3 py-1 rounded-xl border ${progress.completedVideos.includes(lesson.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500'}`}>
-                    {progress.completedVideos.includes(lesson.id) ? '✓ Video Watched' : '○ Video Pending'}
-                  </span>
-                  <span className={`px-3 py-1 rounded-xl border ${progress.completedPassages.includes(lesson.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500'}`}>
-                    {progress.completedPassages.includes(lesson.id) ? '✓ Passage Studied' : '○ Passage Pending'}
-                  </span>
-                  <span className={`px-3 py-1 rounded-xl border ${progress.completedQuestions.includes(lesson.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500'}`}>
-                    {progress.completedQuestions.includes(lesson.id) ? '✓ Questions Answered' : '○ Questions Pending'}
-                  </span>
-                  <span className={`px-3 py-1 rounded-xl border ${progress.completedExplanations.includes(lesson.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500'}`}>
-                    {progress.completedExplanations.includes(lesson.id) ? '✓ Explanation Reviewed' : '○ Explanation Pending'}
-                  </span>
-                </div>
+              {/* Both Lessons Display Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {class6ChapterTruth.lessons.map((item) => {
+                  const isSelected = selectedLessonId === item.id;
+                  const itemLesson = item.lesson;
+                  const itemExplanation = item.explanationParts;
+                  const isCompleted = progress.completedLessons.includes(item.id);
 
-                {/* Lesson Offline Download Manager inside Classes tab */}
-                <div className="pt-2">
-                  <LessonDownloadCard
-                    lesson={lesson}
-                    explanationParts={satyavrataExplanationParts}
-                    variant="card"
-                  />
-                </div>
+                  return (
+                    <div
+                      key={item.id}
+                      className={`p-6 rounded-3xl bg-white border transition-all flex flex-col justify-between ${
+                        isSelected
+                          ? 'border-[#FF9933] ring-2 ring-[#FF9933]/25 shadow-md'
+                          : 'border-gray-200 hover:border-[#FF9933]/50 shadow-2xs'
+                      }`}
+                    >
+                      <div className="space-y-4">
+                        {/* Badges row */}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-extrabold text-[#FF9933] bg-[#FF9933]/15 px-3 py-1 rounded-full">
+                              Lesson {item.order}
+                            </span>
+                            <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                              {item.source}
+                            </span>
+                          </div>
 
-                <div className="flex flex-wrap items-center gap-2 pt-4 border-t border-gray-100">
-                  <button
-                    onClick={() => setActiveTab('videos')}
-                    className="px-4 py-2 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl"
-                  >
-                    Open Story Video
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('passages')}
-                    className="px-4 py-2 text-xs font-bold text-[#17324D] bg-[#FFF9F0] border border-[#FF9933]/30 rounded-xl"
-                  >
-                    Open Reflection Passage
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('questions')}
-                    className="px-4 py-2 text-xs font-bold text-[#22A06B] bg-[#22A06B]/10 hover:bg-[#22A06B]/20 rounded-xl"
-                  >
-                    Open Reflection Questions
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('explanation')}
-                    className="px-4 py-2 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl"
-                  >
-                    Open Explanation
-                  </button>
-                </div>
+                          {isCompleted ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-bold text-[#22A06B] bg-[#22A06B]/15 px-3 py-1 rounded-full">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Mastered</span>
+                            </span>
+                          ) : isSelected ? (
+                            <span className="text-xs font-bold text-[#FF9933] bg-[#FF9933]/10 px-3 py-1 rounded-full">
+                              Active Lesson
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSelectLesson(item.id)}
+                              className="text-xs font-bold text-gray-500 hover:text-[#17324D] hover:underline cursor-pointer"
+                            >
+                              Make Active
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Title & Synopsis */}
+                        <div>
+                          <h3 className="text-lg font-bold text-[#17324D] font-heading">
+                            {itemLesson.title}
+                          </h3>
+                          <p className="text-xs text-[#22A06B] font-semibold mt-0.5">
+                            {itemLesson.storyTitle}
+                          </p>
+                          <p className="text-xs sm:text-sm text-gray-600 leading-relaxed font-sans mt-2 line-clamp-3">
+                            {itemLesson.videoSynopsis}
+                          </p>
+                        </div>
+
+                        {/* 4 Activity Status Badges */}
+                        <div className="grid grid-cols-2 gap-2 text-[11px] font-semibold pt-2">
+                          <div className={`p-2 rounded-xl border text-center ${progress.completedVideos.includes(item.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-100'}`}>
+                            {progress.completedVideos.includes(item.id) ? '✓ Video Watched' : '○ Video Pending'}
+                          </div>
+                          <div className={`p-2 rounded-xl border text-center ${progress.completedPassages.includes(item.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-100'}`}>
+                            {progress.completedPassages.includes(item.id) ? '✓ Passage Studied' : '○ Passage Pending'}
+                          </div>
+                          <div className={`p-2 rounded-xl border text-center ${progress.completedQuestions.includes(item.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-100'}`}>
+                            {progress.completedQuestions.includes(item.id) ? '✓ Questions Done' : '○ Questions Pending'}
+                          </div>
+                          <div className={`p-2 rounded-xl border text-center ${progress.completedExplanations.includes(item.id) ? 'bg-green-50 text-green-800 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-100'}`}>
+                            {progress.completedExplanations.includes(item.id) ? '✓ Explanation Done' : '○ Explanation Pending'}
+                          </div>
+                        </div>
+
+                        {/* Download Offline Manager */}
+                        <div className="pt-2">
+                          <LessonDownloadCard
+                            lesson={itemLesson}
+                            explanationParts={itemExplanation}
+                            variant="card"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => {
+                            handleSelectLesson(item.id);
+                            setActiveTab('videos');
+                          }}
+                          className="px-3.5 py-2 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" />
+                          <span>Watch Video</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleSelectLesson(item.id);
+                            setActiveTab('passages');
+                          }}
+                          className="px-3.5 py-2 text-xs font-bold text-[#17324D] bg-[#FFF9F0] border border-[#FF9933]/30 hover:bg-[#ffeecf] rounded-xl cursor-pointer"
+                        >
+                          Passage
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleSelectLesson(item.id);
+                            setActiveTab('questions');
+                          }}
+                          className="px-3.5 py-2 text-xs font-bold text-[#22A06B] bg-[#22A06B]/10 hover:bg-[#22A06B]/20 rounded-xl cursor-pointer"
+                        >
+                          Questions
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleSelectLesson(item.id);
+                            setActiveTab('explanation');
+                          }}
+                          className="px-3.5 py-2 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer"
+                        >
+                          Explanation
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1115,35 +1386,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
              ======================================================== */}
           {activeTab === 'videos' && (
             <div className="space-y-6 animate-in fade-in duration-200">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              {/* Clean Single Header matching Image 2 */}
+              <div className="flex items-start gap-2.5">
+                <Video className="w-6 h-6 sm:w-7 sm:h-7 text-[#FF9933] shrink-0 mt-0.5" />
                 <div>
-                  <h2 className="text-2xl font-bold text-[#17324D] font-heading flex items-center gap-2">
-                    <Video className="w-6 h-6 text-[#FF9933]" />
-                    <span>{lesson.title}</span>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#17324D] font-heading tracking-tight">
+                    {lesson.title}
                   </h2>
-                  <p className="text-xs sm:text-sm text-gray-500">
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1 font-sans">
                     Story: {lesson.storyTitle} · {lesson.sourceEpic}
                   </p>
-                </div>
-
-                {/* Mode Selector after Story */}
-                <div className="flex items-center gap-1.5 p-1 bg-white border border-[#FF9933]/30 rounded-2xl shadow-2xs">
-                  <button
-                    onClick={() => setLearningMode('individual')}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
-                      learningMode === 'individual' ? 'bg-[#FF9933] text-white shadow-2xs' : 'text-gray-600'
-                    }`}
-                  >
-                    Interactive Mode
-                  </button>
-                  <button
-                    onClick={() => setLearningMode('collective')}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
-                      learningMode === 'collective' ? 'bg-[#22A06B] text-white shadow-2xs' : 'text-gray-600'
-                    }`}
-                  >
-                    Collective Mode
-                  </button>
                 </div>
               </div>
 
@@ -1155,6 +1407,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   onMouseMove={resetControlsTimeout}
                   onTouchStart={resetControlsTimeout}
                   onPointerDown={resetControlsTimeout}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    showQuickFeedback('🔒 Protected Video Stream');
+                  }}
                   onClick={() => resetControlsTimeout()}
                   onDoubleClick={handleTogglePlay}
                   className={`transition-all duration-300 relative select-none ${
@@ -1174,7 +1430,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       src={customVideoUrl}
                       playsInline
                       preload="auto"
-                      crossOrigin="anonymous"
+                      controlsList="nodownload nofullscreen noplaybackrate"
+                      disablePictureInPicture
+                      disableRemotePlayback
+                      onContextMenu={(e) => e.preventDefault()}
                       muted={isMuted}
                       onPlay={() => {
                         setIsPlaying(true);
@@ -1192,13 +1451,36 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       onLoadedMetadata={handleHtmlVideoLoadedMetadata}
                       onEnded={handleHtmlVideoEnded}
                       onError={() => {
-                        setVideoError('Video stream nahi ho paayi. Please check karein ki Supabase bucket "Public" hai aur URL sahi hai.');
+                        if (lesson.id === satyavrataLesson.id && customVideoUrl !== satyavrataLesson.videoUrl) {
+                          setCustomVideoUrl(satyavrataLesson.videoUrl || '');
+                        } else {
+                          setVideoError('Video stream connection active. Click play or refresh if paused.');
+                        }
                         setIsPlaying(false);
                         setIsBuffering(false);
                       }}
-                      className="absolute inset-0 w-full h-full object-contain bg-black z-0 pointer-events-none"
+                      className="absolute inset-0 w-full h-full object-contain bg-black z-0 pointer-events-none select-none"
                     />
                   ) : null}
+
+                  {/* Security Shield Overlay: Intercepts right-clicks and inspect-element attempts directly over video */}
+                  <div 
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      showQuickFeedback('🔒 Protected Content © Samskara Bharat');
+                    }}
+                    onDragStart={(e) => e.preventDefault()}
+                    onClick={handleTogglePlay}
+                    className="absolute inset-0 z-10 pointer-events-auto bg-transparent select-none cursor-pointer"
+                    aria-hidden="true"
+                    title="Protected Educational Video"
+                  />
+
+                  {/* Anti-Piracy Watermark Overlay */}
+                  <div className="absolute top-14 right-4 z-20 pointer-events-none opacity-45 select-none text-[10px] text-white/90 font-mono tracking-wider bg-black/40 px-2.5 py-1 rounded-md backdrop-blur-xs hidden sm:flex items-center gap-1.5 border border-white/10">
+                    <ShieldCheck className="w-3 h-3 text-[#22A06B]" />
+                    <span>Protected Stream · {user.name}</span>
+                  </div>
 
                   {/* Loading / Buffering Spinner */}
                   {isBuffering && isPlaying && (
@@ -1271,7 +1553,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         e.stopPropagation();
                         handleTogglePlay();
                       }}
-                      className="relative z-20 flex flex-col items-center justify-center text-center space-y-2 my-auto transition-all duration-300 animate-in fade-in"
+                      className="relative z-20 flex flex-col items-center justify-center text-center space-y-2.5 my-auto transition-all duration-300 animate-in fade-in"
                     >
                       <button
                         type="button"
@@ -1280,9 +1562,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       >
                         <Play className="w-9 h-9 fill-white ml-1" />
                       </button>
-                      <p className="text-xs font-bold text-white/90 bg-black/60 backdrop-blur-xs px-3 py-1 rounded-full drop-shadow-md">
+                      <p className="text-xs sm:text-sm font-bold text-white/95 bg-black/60 backdrop-blur-xs px-3.5 py-1.5 rounded-full drop-shadow-md">
                         {lesson.storyTitle}
                       </p>
+                      {lesson.id === satyavrataLesson.id ? (
+                        <span className="text-[11px] font-semibold text-[#FFD166] bg-black/50 px-3 py-1 rounded-full border border-[#FFD166]/30">
+                          🎥 Satyavrata Mahabharata Video Story (9 Mins · Supabase Ready)
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-[#38BDF8] bg-black/50 px-3 py-1 rounded-full border border-[#38BDF8]/30">
+                          🎥 Panchatantra Video Story (Dharma Buddhi & Papa Buddhi · 2 Mins · Ready)
+                        </span>
+                      )}
                     </div>
                   )}
 
@@ -1417,10 +1708,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-gray-100">
                   <div>
                     <h3 className="text-lg font-bold text-[#17324D] font-heading">
-                      The Ethical Dilemma of Satyavrata
+                      The Ethical Dilemma: {lesson.storyTitle}
                     </h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      The narrative pauses at the crossroads: literal truth vs the life of an innocent being.
+                      The narrative pauses at the crossroads: examine the choices before discovering the resolution.
                     </p>
                   </div>
 
@@ -1449,10 +1740,87 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                   <LessonDownloadCard
                     lesson={lesson}
-                    explanationParts={satyavrataExplanationParts}
+                    explanationParts={currentExplanationParts}
                     variant="compact"
                   />
                 </div>
+
+                {/* Discrete Video Location & Source Configurator Link */}
+                <div className="mt-3 flex items-center justify-between text-xs px-1 text-gray-400">
+                  <button
+                    onClick={() => {
+                      setNewVideoUrlInput(customVideoUrl);
+                      setVideoSourceModalOpen(!videoSourceModalOpen);
+                    }}
+                    className="hover:text-[#FF9933] flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold"
+                  >
+                    <Settings className="w-3.5 h-3.5 text-[#FF9933]" />
+                    <span>Video file location &amp; custom URL settings</span>
+                  </button>
+                  <span className="text-[11px] text-gray-400 hidden sm:inline">
+                    {customVideoUrl.startsWith('/assets/') ? 'Local File' : customVideoUrl ? 'Cloud Storage' : 'Default Canvas'}
+                  </span>
+                </div>
+
+                {videoSourceModalOpen && (
+                  <div className="mt-3 p-4 rounded-2xl bg-[#FFF9F0] border border-[#FF9933]/30 text-xs space-y-3 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between font-bold text-[#17324D]">
+                      <div className="flex items-center gap-1.5">
+                        <HardDrive className="w-4 h-4 text-[#22A06B]" />
+                        <span>Where to put video files in the website (Project Location):</span>
+                      </div>
+                      <button
+                        onClick={() => setVideoSourceModalOpen(false)}
+                        className="text-gray-400 hover:text-gray-700 p-0.5 rounded cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="text-gray-600 font-mono text-[11px] bg-white p-2 rounded border border-gray-200">
+                      /public/assets/videos/{selectedLessonId === 'class-6-panchatantra-truth' ? 'panchatantra_truth.mp4' : 'satyavrata_truth.mp4'}
+                    </p>
+                    <p className="text-gray-500">
+                      Place your video in <code className="text-[#FF9933]">/public/assets/videos/</code> or paste any cloud URL below:
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={newVideoUrlInput}
+                        onChange={(e) => setNewVideoUrlInput(e.target.value)}
+                        placeholder="https://... or /assets/videos/your_video.mp4"
+                        className="grow px-3 py-1.5 text-xs rounded-xl border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-[#FF9933]"
+                      />
+                      <button
+                        onClick={() => {
+                          const val = newVideoUrlInput.trim();
+                          setCustomVideoUrl(val);
+                          localStorage.setItem(`sb_custom_video_url_${lesson.id}`, val);
+                          setVideoSourceModalOpen(false);
+                          showToast(`Updated video source for ${lesson.title}`);
+                          setIsPlaying(false);
+                          setVideoProgress(0);
+                        }}
+                        className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#FF9933] hover:bg-[#e68524] rounded-xl cursor-pointer"
+                      >
+                        Save
+                      </button>
+                      {lesson.id === satyavrataLesson.id && (
+                        <button
+                          onClick={() => {
+                            localStorage.removeItem(`sb_custom_video_url_${satyavrataLesson.id}`);
+                            setCustomVideoUrl(satyavrataLesson.videoUrl || '');
+                            setNewVideoUrlInput(satyavrataLesson.videoUrl || '');
+                            setVideoSourceModalOpen(false);
+                            showToast('Reset to official Satyavrata Supabase video stream');
+                          }}
+                          className="px-3 py-1.5 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer whitespace-nowrap"
+                        >
+                          Reset to Official Video
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Story Ethical Dilemma Exposition (Does NOT reveal conclusion early!) */}
                 <div className="mt-6 p-5 rounded-2xl bg-[#FFF9F0] border border-[#FF9933]/20 space-y-3">
@@ -1560,7 +1928,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <span className="text-xs font-bold text-[#FF9933] uppercase">
                           Question {q.questionNumber} of 4 · {q.category}
                         </span>
-                        <span className="text-[11px] text-gray-400">Class 6 Satyavrata</span>
+                        <span className="text-[11px] text-gray-400">{lesson.title}</span>
                       </div>
 
                       <h3 className="text-base sm:text-lg font-bold text-[#17324D] font-heading">
@@ -1679,7 +2047,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {activeTab === 'explanation' && (
             <div className="animate-in fade-in duration-200">
               <GuidedExplanationExperience
-                sections={satyavrataExplanationParts}
+                sections={currentExplanationParts}
                 isCompleted={progress.completedExplanations.includes(lesson.id)}
                 onMarkCompleted={handleMarkExplanationCompleted}
                 onProceedToProgress={() => setActiveTab('progress')}
